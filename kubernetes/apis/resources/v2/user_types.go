@@ -17,6 +17,7 @@ limitations under the License.
 package v2
 
 import (
+	"github.com/gravitational/teleport/api/types"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -24,12 +25,29 @@ import (
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
 // UserSpec defines the desired state of User
-type UserSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+type UserSpec types.UserSpecV2
 
-	// Foo is an example field of User. Edit user_types.go to remove/update
-	Foo string `json:"foo,omitempty"`
+// Marshal serializes a spec into binary data.
+func (spec *UserSpec) Marshal() ([]byte, error) {
+	return (*types.UserSpecV2)(spec).Marshal()
+}
+
+// Unmarshal deserializes a spec from binary data.
+func (spec *UserSpec) Unmarshal(data []byte) error {
+	return (*types.UserSpecV2)(&spec.UserSpecV2).Unmarshal(data)
+}
+
+// DeepCopyInto deep-copies one role spec into another.
+// Required to satisfy runtime.Object interface.
+func (spec *UserSpec) DeepCopyInto(out *UserSpec) {
+	data, err := spec.Marshal()
+	if err != nil {
+		panic(err)
+	}
+	*out = UserSpec{}
+	if err = out.Unmarshal(data); err != nil {
+		panic(err)
+	}
 }
 
 // UserStatus defines the observed state of User
@@ -46,7 +64,7 @@ type User struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   UserSpec   `json:"spec,omitempty"`
+	Spec   UserSpec   `json:"spec,omitempty,inline"`
 	Status UserStatus `json:"status,omitempty"`
 }
 

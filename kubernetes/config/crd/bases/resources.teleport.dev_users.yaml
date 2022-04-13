@@ -25,24 +25,300 @@ spec:
               of an object. Servers should convert recognized schemas to the latest
               internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
             type: string
+          created_by:
+            description: CreatedBy holds information about agent or person created
+              this user
+            properties:
+              connector:
+                description: Identity if present means that user was automatically
+                  created by identity
+                properties:
+                  id:
+                    description: ID is connector ID
+                    type: string
+                  identity:
+                    description: Identity is external identity of the user
+                    type: string
+                  type:
+                    description: Type is connector type
+                    type: string
+                required:
+                - id
+                - identity
+                - type
+                type: object
+              time:
+                description: Time specifies when user was created
+                type: object
+              user:
+                description: User holds information about user
+                properties:
+                  name:
+                    description: Name is name of the user
+                    type: string
+                required:
+                - name
+                type: object
+            required:
+            - time
+            - user
+            type: object
+          expires:
+            description: Expires if set sets TTL on the user
+            type: object
+          github_identities:
+            description: GithubIdentities list associated Github OAuth2 identities
+              that let user log in using externally verified identity
+            items:
+              description: ExternalIdentity is OpenID Connect/SAML or Github identity
+                that is linked to particular user and connector and lets user to log
+                in using external credentials, e.g. google
+              properties:
+                connector_id:
+                  description: ConnectorID is id of registered OIDC connector, e.g.
+                    'google-example.com'
+                  type: string
+                username:
+                  description: Username is username supplied by external identity
+                    provider
+                  type: string
+              type: object
+            type: array
           kind:
             description: 'Kind is a string value representing the REST resource this
               object represents. Servers may infer this from the endpoint the client
               submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
             type: string
+          local_auth:
+            description: LocalAuths hold sensitive data necessary for performing local
+              authentication
+            properties:
+              mfa:
+                items:
+                  description: MFADevice is a multi-factor authentication device,
+                    such as a security key or an OTP app.
+                  properties:
+                    added_at:
+                      description: "A Time represents an instant in time with nanosecond
+                        precision. \n Programs using times should typically store
+                        and pass them as values, not pointers. That is, time variables
+                        and struct fields should be of type time.Time, not *time.Time.
+                        \n A Time value can be used by multiple goroutines simultaneously
+                        except that the methods GobDecode, UnmarshalBinary, UnmarshalJSON
+                        and UnmarshalText are not concurrency-safe. \n Time instants
+                        can be compared using the Before, After, and Equal methods.
+                        The Sub method subtracts two instants, producing a Duration.
+                        The Add method adds a Time and a Duration, producing a Time.
+                        \n The zero value of type Time is January 1, year 1, 00:00:00.000000000
+                        UTC. As this time is unlikely to come up in practice, the
+                        IsZero method gives a simple way of detecting a time that
+                        has not been initialized explicitly. \n Each Time has associated
+                        with it a Location, consulted when computing the presentation
+                        form of the time, such as in the Format, Hour, and Year methods.
+                        The methods Local, UTC, and In return a Time with a specific
+                        location. Changing the location in this way changes only the
+                        presentation; it does not change the instant in time being
+                        denoted and therefore does not affect the computations described
+                        in earlier paragraphs. \n Representations of a Time value
+                        saved by the GobEncode, MarshalBinary, MarshalJSON, and MarshalText
+                        methods store the Time.Location's offset, but not the location
+                        name. They therefore lose information about Daylight Saving
+                        Time. \n In addition to the required “wall clock” reading,
+                        a Time may contain an optional reading of the current process's
+                        monotonic clock, to provide additional precision for comparison
+                        or subtraction. See the “Monotonic Clocks” section in the
+                        package documentation for details. \n Note that the Go ==
+                        operator compares not just the time instant but also the Location
+                        and the monotonic clock reading. Therefore, Time values should
+                        not be used as map or database keys without first guaranteeing
+                        that the identical Location has been set for all values, which
+                        can be achieved through use of the UTC or Local method, and
+                        that the monotonic clock reading has been stripped by setting
+                        t = t.Round(0). In general, prefer t.Equal(u) to t == u, since
+                        t.Equal uses the most accurate comparison available and correctly
+                        handles the case when only one of its arguments has a monotonic
+                        clock reading."
+                      type: object
+                    id:
+                      description: ID is a UUID of this device.
+                      type: string
+                    kind:
+                      description: Boilerplate for implementing the Resource interface.
+                      type: string
+                    last_used:
+                      description: "A Time represents an instant in time with nanosecond
+                        precision. \n Programs using times should typically store
+                        and pass them as values, not pointers. That is, time variables
+                        and struct fields should be of type time.Time, not *time.Time.
+                        \n A Time value can be used by multiple goroutines simultaneously
+                        except that the methods GobDecode, UnmarshalBinary, UnmarshalJSON
+                        and UnmarshalText are not concurrency-safe. \n Time instants
+                        can be compared using the Before, After, and Equal methods.
+                        The Sub method subtracts two instants, producing a Duration.
+                        The Add method adds a Time and a Duration, producing a Time.
+                        \n The zero value of type Time is January 1, year 1, 00:00:00.000000000
+                        UTC. As this time is unlikely to come up in practice, the
+                        IsZero method gives a simple way of detecting a time that
+                        has not been initialized explicitly. \n Each Time has associated
+                        with it a Location, consulted when computing the presentation
+                        form of the time, such as in the Format, Hour, and Year methods.
+                        The methods Local, UTC, and In return a Time with a specific
+                        location. Changing the location in this way changes only the
+                        presentation; it does not change the instant in time being
+                        denoted and therefore does not affect the computations described
+                        in earlier paragraphs. \n Representations of a Time value
+                        saved by the GobEncode, MarshalBinary, MarshalJSON, and MarshalText
+                        methods store the Time.Location's offset, but not the location
+                        name. They therefore lose information about Daylight Saving
+                        Time. \n In addition to the required “wall clock” reading,
+                        a Time may contain an optional reading of the current process's
+                        monotonic clock, to provide additional precision for comparison
+                        or subtraction. See the “Monotonic Clocks” section in the
+                        package documentation for details. \n Note that the Go ==
+                        operator compares not just the time instant but also the Location
+                        and the monotonic clock reading. Therefore, Time values should
+                        not be used as map or database keys without first guaranteeing
+                        that the identical Location has been set for all values, which
+                        can be achieved through use of the UTC or Local method, and
+                        that the monotonic clock reading has been stripped by setting
+                        t = t.Round(0). In general, prefer t.Equal(u) to t == u, since
+                        t.Equal uses the most accurate comparison available and correctly
+                        handles the case when only one of its arguments has a monotonic
+                        clock reading."
+                      type: object
+                    metadata:
+                      description: Metadata is resource metadata
+                      properties:
+                        description:
+                          description: Description is object description
+                          type: string
+                        expires:
+                          description: Expires is a global expiry time header can
+                            be set on any resource in the system.
+                          type: object
+                        id:
+                          description: ID is a record ID
+                          format: int64
+                          type: integer
+                        labels:
+                          additionalProperties:
+                            type: string
+                          description: Labels is a set of labels
+                          type: object
+                        name:
+                          description: Name is an object name
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    sub_kind:
+                      type: string
+                    version:
+                      type: string
+                  required:
+                  - added_at
+                  - last_used
+                  - metadata
+                  type: object
+                type: array
+              password_hash:
+                description: PasswordHash encodes a combined salt & hash for password
+                  verification.
+                format: byte
+                type: string
+              totp_key:
+                description: Deprecated 2nd factor fields, use MFA below instead.
+                type: string
+              webauthn:
+                description: Webauthn holds settings necessary for webauthn local
+                  auth. May be null for legacy users or users that haven't yet used
+                  webauthn as their second factor.
+                properties:
+                  user_id:
+                    description: UserID is the random user handle generated for the
+                      user. See https://www.w3.org/TR/webauthn-2/#sctn-user-handle-privacy.
+                    format: byte
+                    type: string
+                type: object
+            type: object
           metadata:
             type: object
-          spec:
-            description: UserSpec defines the desired state of User
-            properties:
-              foo:
-                description: Foo is an example field of User. Edit user_types.go to
-                  remove/update
-                type: string
-            type: object
+          oidc_identities:
+            description: OIDCIdentities lists associated OpenID Connect identities
+              that let user log in using externally verified identity
+            items:
+              description: ExternalIdentity is OpenID Connect/SAML or Github identity
+                that is linked to particular user and connector and lets user to log
+                in using external credentials, e.g. google
+              properties:
+                connector_id:
+                  description: ConnectorID is id of registered OIDC connector, e.g.
+                    'google-example.com'
+                  type: string
+                username:
+                  description: Username is username supplied by external identity
+                    provider
+                  type: string
+              type: object
+            type: array
+          roles:
+            description: Roles is a list of roles assigned to user
+            items:
+              type: string
+            type: array
+          saml_identities:
+            description: SAMLIdentities lists associated SAML identities that let
+              user log in using externally verified identity
+            items:
+              description: ExternalIdentity is OpenID Connect/SAML or Github identity
+                that is linked to particular user and connector and lets user to log
+                in using external credentials, e.g. google
+              properties:
+                connector_id:
+                  description: ConnectorID is id of registered OIDC connector, e.g.
+                    'google-example.com'
+                  type: string
+                username:
+                  description: Username is username supplied by external identity
+                    provider
+                  type: string
+              type: object
+            type: array
           status:
             description: UserStatus defines the observed state of User
+            properties:
+              is_locked:
+                description: IsLocked tells us if user is locked
+                type: boolean
+              lock_expires:
+                description: LockExpires contains time when this lock will expire
+                type: object
+              locked_message:
+                description: LockedMessage contains the message in case if user is
+                  locked
+                type: string
+              locked_time:
+                description: LockedTime contains time when user was locked
+                type: object
+              recovery_attempt_lock_expires:
+                description: RecoveryAttemptLockExpires contains the time when this
+                  lock will expire from reaching MaxAccountRecoveryAttempts. This
+                  field is used to determine if a user got locked from recovery attempts.
+                type: object
+            required:
+            - is_locked
             type: object
+          traits:
+            additionalProperties:
+              items:
+                type: string
+              type: array
+            description: Traits are key/value pairs received from an identity provider
+              (through OIDC claims or SAML assertions) or from a system administrator
+              for local accounts. Traits are used to populate role variables.
+            type: object
+        required:
+        - expires
         type: object
     served: true
     storage: true

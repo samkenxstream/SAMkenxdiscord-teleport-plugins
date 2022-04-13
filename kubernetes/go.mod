@@ -11,6 +11,12 @@ require (
 )
 
 require (
+	github.com/gravitational/trace v1.1.17 // indirect
+	github.com/jonboulle/clockwork v0.2.2 // indirect
+	github.com/sirupsen/logrus v1.8.1 // indirect
+)
+
+require (
 	cloud.google.com/go/compute v1.5.0 // indirect
 	github.com/Azure/go-autorest v14.2.0+incompatible // indirect
 	github.com/Azure/go-autorest/autorest v0.11.25 // indirect
@@ -37,6 +43,7 @@ require (
 	github.com/google/go-cmp v0.5.7 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
 	github.com/google/uuid v1.3.0 // indirect
+	github.com/gravitational/teleport/api v0.0.0-20220412143140-75dae9155db2
 	github.com/imdario/mergo v0.3.12 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect

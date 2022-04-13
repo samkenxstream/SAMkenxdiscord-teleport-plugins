@@ -17,6 +17,7 @@ limitations under the License.
 package v5
 
 import (
+	"github.com/gravitational/teleport/api/types"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -25,17 +26,36 @@ import (
 
 // RoleSpec defines the desired state of Role
 type RoleSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// Foo is an example field of Role. Edit role_types.go to remove/update
-	Foo string `json:"foo,omitempty"`
+	types.RoleSpecV5 `json:"spec"`
 }
 
 // RoleStatus defines the observed state of Role
 type RoleStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+}
+
+// Marshal serializes a spec into binary data.
+func (spec *RoleSpec) Marshal() ([]byte, error) {
+	return (*types.RoleSpecV5)(&spec.RoleSpecV5).Marshal()
+}
+
+// Unmarshal deserializes a spec from binary data.
+func (spec *RoleSpec) Unmarshal(data []byte) error {
+	return (*types.RoleSpecV5)(&spec.RoleSpecV5).Unmarshal(data)
+}
+
+// DeepCopyInto deep-copies one role spec into another.
+// Required to satisfy runtime.Object interface.
+func (spec *RoleSpec) DeepCopyInto(out *RoleSpec) {
+	data, err := spec.Marshal()
+	if err != nil {
+		panic(err)
+	}
+	*out = RoleSpec{}
+	if err = out.Unmarshal(data); err != nil {
+		panic(err)
+	}
 }
 
 //+kubebuilder:object:root=true
