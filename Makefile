@@ -119,6 +119,8 @@ update-version:
 	sed -i '1s/.*/VERSION=$(VERSION)/' access/pagerduty/Makefile
 	sed -i '1s/.*/VERSION=$(VERSION)/' access/email/Makefile
 	sed -i '1s/.*/VERSION=$(VERSION)/' terraform/install.mk
+	# Update chart versions
+	sed -i 's/appVersion: .*/appVersion: "$(VERSION)"/' charts/event-handler/Chart.yaml
 
 .PHONY: update-tag
 update-tag:
