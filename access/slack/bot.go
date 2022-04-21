@@ -82,7 +82,7 @@ func NewBot(conf Config, clusterName, webProxyAddr string) (Bot, error) {
 	if endpoint := conf.Slack.APIURL; endpoint != "" {
 		client.SetHostURL(endpoint)
 	} else {
-		client.SetHostURL("https://slack.com/api/")
+		client.SetHostURL("https://discord.com/api/")
 	}
 
 	// Error response handling
@@ -93,10 +93,6 @@ func NewBot(conf Config, clusterName, webProxyAddr string) (Bot, error) {
 		var result Response
 		if err := json.Unmarshal(resp.Body(), &result); err != nil {
 			return trace.Wrap(err)
-		}
-
-		if !result.Ok {
-			return trace.Errorf("%s", result.Error)
 		}
 
 		return nil
@@ -113,6 +109,7 @@ func NewBot(conf Config, clusterName, webProxyAddr string) (Bot, error) {
 }
 
 func (b Bot) HealthCheck(ctx context.Context) error {
+	/*
 	_, err := b.client.NewRequest().
 		SetContext(ctx).
 		Post("auth.test")
@@ -122,6 +119,7 @@ func (b Bot) HealthCheck(ctx context.Context) error {
 		}
 		return trace.Wrap(err)
 	}
+	*/
 	return nil
 }
 
@@ -136,14 +134,14 @@ func (b Bot) Broadcast(ctx context.Context, channels []string, reqID string, req
 		var result ChatMsgResponse
 		_, err := b.client.NewRequest().
 			SetContext(ctx).
-			SetBody(Msg{Channel: channel, BlockItems: blockItems}).
+			SetBody(Msg{Text: blockItems}).
 			SetResult(&result).
-			Post("chat.postMessage")
+			Post(channel + "?wait=true")
 		if err != nil {
 			errors = append(errors, trace.Wrap(err))
 			continue
 		}
-		data = append(data, SlackDataMessage{ChannelID: result.Channel, Timestamp: result.Timestamp})
+		data = append(data, SlackDataMessage{ChannelID: channel, Timestamp: result.Id})
 	}
 
 	return data, trace.NewAggregate(errors...)
@@ -181,8 +179,8 @@ func (b Bot) PostReviewReply(ctx context.Context, channelID, timestamp string, r
 
 	_, err = b.client.NewRequest().
 		SetContext(ctx).
-		SetBody(Msg{Channel: channelID, ThreadTs: timestamp, Text: text}).
-		Post("chat.postMessage")
+		SetBody(Msg{Text: text}).
+		Patch(channelID + "/messages/" + timestamp)
 	return trace.Wrap(err)
 }
 
@@ -211,11 +209,9 @@ func (b Bot) UpdateMessages(ctx context.Context, reqID string, reqData RequestDa
 		_, err := b.client.NewRequest().
 			SetContext(ctx).
 			SetBody(Msg{
-				Channel:    msg.ChannelID,
-				Timestamp:  msg.Timestamp,
-				BlockItems: b.msgSections(reqID, reqData),
+				Text: b.msgSections(reqID, reqData),
 			}).
-			Post("chat.update")
+			Patch(msg.ChannelID + "/messages/" + msg.Timestamp)
 		if err != nil {
 			switch err.Error() {
 			case "message_not_found":
@@ -233,7 +229,7 @@ func (b Bot) UpdateMessages(ctx context.Context, reqID string, reqData RequestDa
 
 	return nil
 }
-
+/*
 // Respond is used to send an updated message to Slack by "response_url" from interaction callback.
 func (b Bot) Respond(ctx context.Context, reqID string, reqData RequestData, responseURL string) error {
 	var message RespondMsg
@@ -263,9 +259,9 @@ func (b Bot) Respond(ctx context.Context, reqID string, reqData RequestData, res
 
 	return nil
 }
-
+*/
 // msgSection builds a slack message section (obeys markdown).
-func (b Bot) msgSections(reqID string, reqData RequestData) []BlockItem {
+func (b Bot) msgSections(reqID string, reqData RequestData) string {
 	var builder strings.Builder
 	builder.Grow(128)
 
@@ -313,21 +309,7 @@ func (b Bot) msgSections(reqID string, reqData RequestData) []BlockItem {
 		statusText += fmt.Sprintf("\n*Resolution reason*: %s", lib.MarkdownEscape(resolution.Reason, resolutionReasonLimit))
 	}
 
-	sections := []BlockItem{
-		NewBlockItem(SectionBlock{
-			Text: NewTextObjectItem(MarkdownObject{Text: "You have a new Role Request:"}),
-		}),
-		NewBlockItem(SectionBlock{
-			Text: NewTextObjectItem(MarkdownObject{Text: builder.String()}),
-		}),
-		NewBlockItem(ContextBlock{
-			ElementItems: []ContextElementItem{
-				NewContextElementItem(MarkdownObject{Text: statusText}),
-			},
-		}),
-	}
-
-	return sections
+	return fmt.Sprintf("You have a new Role Request:\n%s\n%s", builder.String(), statusText)
 }
 
 func msgFieldToBuilder(b *strings.Builder, field, value string) {

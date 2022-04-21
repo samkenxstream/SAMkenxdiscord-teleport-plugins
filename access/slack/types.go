@@ -9,15 +9,11 @@ import (
 // Slack API types
 
 type Response struct {
-	Ok    bool   `json:"ok"`
-	Error string `json:"error,omitempty"`
 }
 
 type ChatMsgResponse struct {
 	Response
-	Channel   string `json:"channel"`
-	Timestamp string `json:"ts"`
-	Text      string `json:"text"`
+	Id string `json:"id"`
 }
 
 type Msg struct {
@@ -26,7 +22,7 @@ type Msg struct {
 	User       string      `json:"user,omitempty"`
 	Username   string      `json:"username,omitempty"`
 	Timestamp  string      `json:"ts,omitempty"`
-	Text       string      `json:"text,omitempty"`
+	Text       string      `json:"content,omitempty"`
 	ThreadTs   string      `json:"thread_ts,omitempty"`
 	BlockItems []BlockItem `json:"blocks,omitempty"`
 }

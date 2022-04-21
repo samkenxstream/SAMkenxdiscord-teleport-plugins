@@ -54,8 +54,8 @@ func DecodePluginData(dataMap map[string]string) (data PluginData) {
 	}
 	if str := dataMap["messages"]; str != "" {
 		for _, encodedMsg := range strings.Split(str, ",") {
-			if parts := strings.Split(encodedMsg, "/"); len(parts) == 2 {
-				data.SlackData = append(data.SlackData, SlackDataMessage{ChannelID: parts[0], Timestamp: parts[1]})
+			if parts := strings.Split(encodedMsg, "/"); len(parts) >= 2 {
+				data.SlackData = append(data.SlackData, SlackDataMessage{ChannelID: strings.Join(parts[0:len(parts)-1], "/"), Timestamp: parts[len(parts)-1]})
 			}
 		}
 	}
