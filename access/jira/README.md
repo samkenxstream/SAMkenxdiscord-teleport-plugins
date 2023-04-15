@@ -27,15 +27,15 @@ $ ./install
 
 ### Docker Image
 ```bash
-$ docker pull quay.io/gravitational/teleport-plugin-jira:9.0.2
+$ docker pull public.ecr.aws/gravitational/teleport-plugin-jira:9.0.2
 ```
 
 ```bash
-$ docker run quay.io/gravitational/teleport-plugin-jira:9.0.2 version
+$ docker run public.ecr.aws/gravitational/teleport-plugin-jira:9.0.2 version
 teleport-jira v9.0.2 git:teleport-jira-v9.0.2-0-g9e149895 go1.17.8
 ```
 
-For a list of available tags, visit [https://quay.io/](https://quay.io/repository/gravitational/teleport-plugin-jira?tab=tags)
+For a list of available tags, visit [AWS ECR Public Gallery](https://gallery.ecr.aws/gravitational/teleport-plugin-jira)
 
 ### Building from source
 
@@ -50,8 +50,8 @@ $ ./build/teleport-jira start
 
 ## Set up Jira board
 
-- [See detailed setup instructions for Jira Cloud on the website](https://goteleport.com/teleport/docs/enterprise/workflow/ssh_approval_jira_cloud/)
-- [See detailed setup instructions for Jira Server on the website](https://goteleport.com/teleport/docs/enterprise/workflow/ssh_approval_jira_server/)
+- [See detailed setup instructions for Jira Cloud on the website](https://goteleport.com/docs/enterprise/workflow/ssh-approval-jira-cloud/)
+- [See detailed setup instructions for Jira Server on the website](https://goteleport.com/docs/enterprise/workflow/ssh-approval-jira-server/)
 
 Setup process is different for the Jira Cloud and Jira Server editions:
 
@@ -75,7 +75,7 @@ spec:
     rules:
       - resources: ['access_request']
         verbs: ['list', 'read', 'update']
-version: v5
+version: v6
 ```
 
 ### User
@@ -153,11 +153,9 @@ $ teleport-jira start
 or with docker:
 
 ```bash
-$ docker run -v <path/to/config>:/etc/teleport-jira.toml quay.io/gravitational/teleport-plugin-jira:9.0.2 start
+$ docker run -v <path/to/config>:/etc/teleport-jira.toml public.ecr.aws/gravitational/teleport-plugin-jira:9.0.2 start
 ```
 
 If something bad happens, try to run it with `-d` option i.e. `teleport-jira start -d` and attach the stdout output to the issue you are going to create.
 
 If for some reason you want to disable TLS termination in the plugin and deploy it somewhere else e.g. on some reverse proxy, you may want to run the plugin with `--insecure-no-tls` option. With `--insecure-no-tls` option, plugin's webhook server will talk plain HTTP protocol.
-
-

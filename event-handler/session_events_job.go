@@ -1,17 +1,31 @@
+// Copyright 2023 Gravitational, Inc
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package main
 
 import (
 	"context"
 	"time"
 
+	"github.com/gravitational/trace"
+	"github.com/jonboulle/clockwork"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/sync/semaphore"
 
 	"github.com/gravitational/teleport-plugins/lib"
 	"github.com/gravitational/teleport-plugins/lib/backoff"
 	"github.com/gravitational/teleport-plugins/lib/logger"
-	"github.com/gravitational/trace"
-	"github.com/jonboulle/clockwork"
-	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -64,14 +78,19 @@ func (j *SessionEventsJob) run(ctx context.Context) error {
 		return nil
 	})
 
-	j.restartPausedSessions()
+	if err := j.restartPausedSessions(); err != nil {
+		log.WithError(err).Error("Restarting paused sessions")
+	}
 
 	j.SetReady(true)
 
 	for {
 		select {
 		case s := <-j.sessions:
-			j.semaphore.Acquire(ctx, 1)
+			if err := j.semaphore.Acquire(ctx, 1); err != nil {
+				log.WithError(err).Error("Failed to acquire semaphore")
+				continue
+			}
 
 			log.WithField("id", s.ID).WithField("index", s.Index).Info("Starting session ingest")
 
@@ -231,12 +250,13 @@ func (j *SessionEventsJob) RegisterSession(ctx context.Context, e *TeleportEvent
 
 	s := session{ID: e.SessionID, Index: 0}
 
-	go func() error {
+	go func() {
 		select {
 		case j.sessions <- s:
-			return nil
+			return
 		case <-ctx.Done():
-			return ctx.Err()
+			log.Error(ctx.Err())
+			return
 		}
 	}()
 

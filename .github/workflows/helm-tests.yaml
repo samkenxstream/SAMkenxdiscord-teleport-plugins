@@ -1,0 +1,29 @@
+name: Plugins Tests (Helm)
+run-name: Plugins Tests (Helm) - ${{ github.run_id }} - @${{ github.actor }}
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+jobs:
+  test:
+    name: Plugins Tests (Helm)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Teleport Plugins
+        uses: actions/checkout@v3
+
+      - name: Setup Helm 3.5.2
+        uses: azure/setup-helm@v3
+        with:
+          version: '3.5.2'
+
+      - name: Setup helm-unittest
+        run: |
+            helm plugin install --version=v0.2.11 https://github.com/quintush/helm-unittest
+            helm plugin list
+
+      - name: Run tests
+        run: make test-helm

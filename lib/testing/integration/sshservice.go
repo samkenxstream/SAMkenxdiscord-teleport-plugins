@@ -28,8 +28,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gravitational/teleport-plugins/lib/logger"
 	"github.com/gravitational/trace"
+
+	"github.com/gravitational/teleport-plugins/lib/logger"
 )
 
 var regexpSSHStarting = regexp.MustCompile(`Service [^ ]+ is starting on [^ ]+:(\d+)`)
@@ -118,8 +119,10 @@ func (ssh *SSHService) Run(ctx context.Context) error {
 		terminateOnce.Do(func() {
 			log.Debug("Terminating SSH service process")
 			// Signal the process to gracefully terminate by sending SIGQUIT.
-			cmd.Process.Signal(syscall.SIGQUIT)
-			// If we're not done in 5 minutes, just kill the process by cancelling its context.
+			if err := cmd.Process.Signal(syscall.SIGQUIT); err != nil {
+				log.Warn(err)
+			}
+			// If we're not done in 5 minutes, just kill the process by canceling its context.
 			go func() {
 				select {
 				case <-ssh.doneCh:
@@ -143,22 +146,24 @@ func (ssh *SSHService) Run(ctx context.Context) error {
 		stdout := bufio.NewReader(stdoutPipe)
 		for {
 			line, err := stdout.ReadString('\n')
-			if line != "" {
-				ssh.saveStdout(line)
-				ssh.parseLine(ctx, line)
-				if !ssh.IsReady() {
-					if addr := ssh.Addr(); !addr.IsEmpty() {
-						log.Debugf("Found addr of SSH service process: %v", addr)
-						ssh.setReady(true)
-					}
-				}
-			}
 			if err == io.EOF {
 				return
 			}
 			if err := trace.Wrap(err); err != nil {
 				log.WithError(err).Error("failed to read process stdout")
 				return
+			}
+
+			ssh.saveStdout(line)
+
+			if ssh.IsReady() {
+				continue
+			}
+
+			ssh.parseLine(ctx, line)
+			if strings.Contains(line, "The new service has started successfully.") {
+				log.Debugf("Found addr of SSH service process: %v", ssh.sshAddr)
+				ssh.setReady(true)
 			}
 		}
 	}()
@@ -195,7 +200,7 @@ func (ssh *SSHService) Run(ctx context.Context) error {
 	if !ssh.IsReady() {
 		log.Error("SSH service is failed to initialize")
 		stdoutLines := strings.Split(ssh.Stdout(), "\n")
-		for _, line := range stdoutLines[len(stdoutLines)-10:] {
+		for _, line := range stdoutLines {
 			log.Debug("SSH service log: ", line)
 		}
 		log.Debugf("SSH service stderr: %q", ssh.Stderr())

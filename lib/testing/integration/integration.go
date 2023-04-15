@@ -21,7 +21,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"os"
 	"os/exec"
@@ -32,14 +31,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gravitational/teleport/api/client"
+	"github.com/gravitational/teleport/api/types"
+	"github.com/gravitational/teleport/api/utils"
+	"github.com/gravitational/trace"
 	"github.com/hashicorp/go-version"
+	"google.golang.org/grpc"
 
 	"github.com/gravitational/teleport-plugins/lib/logger"
 	"github.com/gravitational/teleport-plugins/lib/tctl"
 	"github.com/gravitational/teleport-plugins/lib/tsh"
-	"github.com/gravitational/teleport/api/client"
-	"github.com/gravitational/teleport/api/types"
-	"github.com/gravitational/trace"
 )
 
 const IntegrationAdminRole = "integration-admin"
@@ -109,7 +110,7 @@ func New(ctx context.Context, paths BinPaths, licenseStr string) (*Integration, 
 		}
 	}()
 
-	integration.workDir, err = ioutil.TempDir("", "teleport-plugins-integration-*")
+	integration.workDir, err = os.MkdirTemp("", "teleport-plugins-integration-*")
 	if err != nil {
 		return nil, trace.Wrap(err, "failed to initialize work directory")
 	}
@@ -263,8 +264,16 @@ func (integration *Integration) Version() Version {
 	return integration.version
 }
 
+type AuthServiceOption func(yaml string) string
+
+func WithCache() AuthServiceOption {
+	return func(yaml string) string {
+		return strings.ReplaceAll(yaml, "{{TELEPORT_CACHE_ENABLED}}", "true")
+	}
+}
+
 // NewAuthService creates a new auth server instance.
-func (integration *Integration) NewAuthService() (*AuthService, error) {
+func (integration *Integration) NewAuthService(opts ...AuthServiceOption) (*AuthService, error) {
 	dataDir, err := integration.tempDir("data-auth-*")
 	if err != nil {
 		return nil, trace.Wrap(err, "failed to initialize data directory")
@@ -274,7 +283,14 @@ func (integration *Integration) NewAuthService() (*AuthService, error) {
 	if err != nil {
 		return nil, trace.Wrap(err, "failed to write config file")
 	}
-	yaml := strings.ReplaceAll(teleportAuthYAML, "{{TELEPORT_DATA_DIR}}", dataDir)
+
+	yaml := teleportAuthYAML
+	for _, o := range opts {
+		yaml = o(yaml)
+	}
+
+	yaml = strings.ReplaceAll(yaml, "{{TELEPORT_DATA_DIR}}", dataDir)
+	yaml = strings.ReplaceAll(yaml, "{{TELEPORT_CACHE_ENABLED}}", "false")
 	yaml = strings.ReplaceAll(yaml, "{{TELEPORT_LICENSE_FILE}}", integration.paths.license)
 	yaml = strings.ReplaceAll(yaml, "{{TELEPORT_AUTH_TOKEN}}", integration.token)
 	if _, err := configFile.WriteString(yaml); err != nil {
@@ -384,6 +400,9 @@ func (integration *Integration) NewSignedClient(ctx context.Context, auth Auth, 
 		InsecureAddressDiscovery: true,
 		Addrs:                    []string{auth.AuthAddr().String()},
 		Credentials:              []client.Credentials{client.LoadIdentityFile(identityPath)},
+		DialOpts: []grpc.DialOption{
+			grpc.WithReturnConnectionError(),
+		},
 	})
 	if err != nil {
 		return nil, trace.Wrap(err)
@@ -395,10 +414,11 @@ func (integration *Integration) NewSignedClient(ctx context.Context, auth Auth, 
 
 func (integration *Integration) MakeAdmin(ctx context.Context, auth *AuthService, userName string) (*Client, error) {
 	var bootstrap Bootstrap
-	if _, err := bootstrap.AddRole(IntegrationAdminRole, types.RoleSpecV5{
+	if _, err := bootstrap.AddRole(IntegrationAdminRole, types.RoleSpecV6{
 		Allow: types.RoleConditions{
+			NodeLabels: types.Labels{types.Wildcard: utils.Strings{types.Wildcard}},
 			Rules: []types.Rule{
-				types.Rule{
+				{
 					Resources: []string{"*"},
 					Verbs:     []string{"*"},
 				},
@@ -527,7 +547,7 @@ func (integration *Integration) registerService(service Service) {
 }
 
 func (integration *Integration) tempFile(pattern string) (*os.File, error) {
-	file, err := ioutil.TempFile(integration.workDir, pattern)
+	file, err := os.CreateTemp(integration.workDir, pattern)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -536,7 +556,7 @@ func (integration *Integration) tempFile(pattern string) (*os.File, error) {
 }
 
 func (integration *Integration) tempDir(pattern string) (string, error) {
-	dir, err := ioutil.TempDir(integration.workDir, pattern)
+	dir, err := os.MkdirTemp(integration.workDir, pattern)
 	if err != nil {
 		return "", trace.Wrap(err)
 	}

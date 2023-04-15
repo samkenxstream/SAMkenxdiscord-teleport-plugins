@@ -1,4 +1,4 @@
-suite: Test deployment
+suite: Test configmap
 templates:
   - configmap.yaml
 tests:
@@ -6,13 +6,14 @@ tests:
     set:
       teleport:
         address: teleport.example.com:1234
-      maingun.enabled: false
+      mailgun.enabled: false
       smtp:
         enabled: true
-        host: smtp.someservice.com
+        host: smtp.example.com
         port: 1234
         username: mysmtpuser
         password: mysmtppasswd
+        starttlsPolicy: mandatory
       delivery:
         sender: teleport@example.com
         recipients:
@@ -23,14 +24,69 @@ tests:
     asserts:
       - matchSnapshot: {}
 
+  - it: should match the snapshot (smtp on, roleToRecipients set)
+    set:
+      teleport:
+        address: teleport.example.com:1234
+      mailgun.enabled: false
+      smtp:
+        enabled: true
+        host: smtp.example.com
+        port: 1234
+        username: mysmtpuser
+        password: mysmtppasswd
+        starttlsPolicy: mandatory
+      delivery:
+        sender: teleport@example.com
+      roleToRecipients:
+        '*':
+          - security@mycompany.com
+        'dev':
+          - 'developers@mycompany.com'
+      log:
+        output: /var/log/teleport-email.log
+        severity: DEBUG
+    asserts:
+      - matchSnapshot: {}
+
   - it: should match the snapshot (smtp on, password file)
     set:
       teleport:
         address: teleport.example.com:1234
-      maingun.enabled: false
+      mailgun.enabled: false
       smtp:
         enabled: true
-        host: smtp.someservice.com
+        host: smtp.example.com
+        port: 1234
+        username: mysmtpuser
+        passwordFile: /etc/teleport/supersecretemailpw
+        starttlsPolicy: mandatory
+    asserts:
+      - matchSnapshot: {}
+
+  - it: should match the snapshot (smtp on, starttls disabled)
+    set:
+      teleport:
+        address: teleport.example.com:1234
+      mailgun.enabled: false
+      smtp:
+        enabled: true
+        host: smtp.example.com
+        port: 1234
+        username: mysmtpuser
+        passwordFile: /etc/teleport/supersecretemailpw
+        starttlsPolicy: disabled
+    asserts:
+      - matchSnapshot: {}
+
+  - it: should match the snapshot (smtp on, no starttls)
+    set:
+      teleport:
+        address: teleport.example.com:1234
+      mailgun.enabled: false
+      smtp:
+        enabled: true
+        host: smtp.example.com
         port: 1234
         username: mysmtpuser
         passwordFile: /etc/teleport/supersecretemailpw
@@ -45,6 +101,6 @@ tests:
       mailgun:
         enabled: true
         domain: mymailgunsubdomain.mailgun.org
-        privateKey: xoxb-71d75f662b0eac53565a38c8cc0316f6
+        privateKey: xoxb-fakekey62b0eac53565a38c8cc0316f6
     asserts:
       - matchSnapshot: {}

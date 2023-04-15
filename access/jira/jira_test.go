@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os/user"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -30,22 +31,20 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/gravitational/teleport-plugins/lib"
-	"github.com/gravitational/teleport-plugins/lib/logger"
-	. "github.com/gravitational/teleport-plugins/lib/testing"
-	"github.com/gravitational/teleport-plugins/lib/testing/integration"
 	"github.com/gravitational/teleport/api/client/proto"
 	"github.com/gravitational/teleport/api/types"
 	"github.com/gravitational/trace"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/gravitational/teleport-plugins/lib"
+	"github.com/gravitational/teleport-plugins/lib/logger"
+	"github.com/gravitational/teleport-plugins/lib/testing/integration"
 )
 
 type JiraSuite struct {
-	Suite
+	integration.Suite
 	appConfig Config
 	userNames struct {
 		ruler     string
@@ -71,7 +70,8 @@ func (s *JiraSuite) SetupSuite() {
 	t := s.T()
 
 	logger.Init()
-	logger.Setup(logger.Config{Severity: "debug"})
+	err = logger.Setup(logger.Config{Severity: "debug"})
+	require.NoError(t, err)
 	s.raceNumber = runtime.GOMAXPROCS(0)
 	me, err := user.Current()
 	require.NoError(t, err)
@@ -109,9 +109,9 @@ func (s *JiraSuite) SetupSuite() {
 
 	conditions := types.RoleConditions{Request: &types.AccessRequestConditions{Roles: []string{"editor"}}}
 	if teleportFeatures.AdvancedAccessWorkflows {
-		conditions.Request.Thresholds = []types.AccessReviewThreshold{types.AccessReviewThreshold{Approve: 2, Deny: 2}}
+		conditions.Request.Thresholds = []types.AccessReviewThreshold{{Approve: 2, Deny: 2}}
 	}
-	role, err := bootstrap.AddRole("foo", types.RoleSpecV5{Allow: conditions})
+	role, err := bootstrap.AddRole("foo", types.RoleSpecV6{Allow: conditions})
 	require.NoError(t, err)
 
 	user, err := bootstrap.AddUserWithRoles(me.Username+"@example.com", role.GetName())
@@ -124,7 +124,7 @@ func (s *JiraSuite) SetupSuite() {
 	if teleportFeatures.AdvancedAccessWorkflows {
 		// Set up TWO users who can review access requests to role "editor".
 
-		role, err = bootstrap.AddRole("foo-reviewer", types.RoleSpecV5{
+		role, err = bootstrap.AddRole("foo-reviewer", types.RoleSpecV6{
 			Allow: types.RoleConditions{
 				ReviewRequests: &types.AccessReviewConditions{Roles: []string{"editor"}},
 			},
@@ -142,7 +142,7 @@ func (s *JiraSuite) SetupSuite() {
 
 	// Set up plugin user.
 
-	role, err = bootstrap.AddRole("access-jira", types.RoleSpecV5{
+	role, err = bootstrap.AddRole("access-jira", types.RoleSpecV6{
 		Allow: types.RoleConditions{
 			Rules: []types.Rule{
 				types.NewRule("access_request", []string{"list", "read", "update"}),
@@ -187,7 +187,8 @@ func (s *JiraSuite) SetupSuite() {
 func (s *JiraSuite) SetupTest() {
 	t := s.T()
 
-	logger.Setup(logger.Config{Severity: "debug"})
+	err := logger.Setup(logger.Config{Severity: "debug"})
+	require.NoError(t, err)
 
 	s.fakeJira = NewFakeJira(s.authorUser, s.raceNumber)
 	t.Cleanup(s.fakeJira.Close)
@@ -333,6 +334,30 @@ func (s *JiraSuite) TestIssueCreationWithRequestReason() {
 	if !strings.Contains(issue.Fields.Description, `Reason: *because of*`) {
 		t.Error("Issue description should contain request reason")
 	}
+}
+
+func (s *JiraSuite) TestIssueCreationWithLargeRequestReason() {
+	t := s.T()
+
+	s.startApp()
+
+	req := s.newAccessRequest()
+	req.SetRequestReason(strings.Repeat("a", jiraReasonLimit+10))
+	err := s.requestor().CreateAccessRequest(s.Context(), req)
+	require.NoError(t, err)
+	s.checkPluginData(req.GetName(), func(data PluginData) bool {
+		return data.IssueID != ""
+	}) // when issue id is written, we are sure that request is completely served.
+
+	issue, err := s.fakeJira.CheckNewIssue(s.Context())
+	require.NoError(t, err)
+	re := regexp.MustCompile("(?:Reason...)(a+)")
+	match := re.FindStringSubmatch(issue.Fields.Description)
+	if len(match) != 2 {
+		t.Error("reason not found in issue description")
+		return
+	}
+	require.Equal(t, jiraReasonLimit, len(match[1]))
 }
 
 func (s *JiraSuite) TestReviewComments() {
@@ -695,7 +720,8 @@ func (s *JiraSuite) TestExpiration() {
 func (s *JiraSuite) TestRace() {
 	t := s.T()
 
-	logger.Setup(logger.Config{Severity: "info"}) // Turn off noisy debug logging
+	err := logger.Setup(logger.Config{Severity: "info"}) // Turn off noisy debug logging
+	require.NoError(t, err)
 
 	s.SetContextTimeout(20 * time.Second)
 	app := s.startApp()

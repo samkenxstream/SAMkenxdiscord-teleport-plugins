@@ -20,13 +20,15 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/gravitational/teleport-plugins/lib/logger"
 	"github.com/gravitational/teleport/api/client"
 	"github.com/gravitational/teleport/api/types"
 	"github.com/gravitational/teleport/api/types/events"
 	"github.com/gravitational/trace"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
+
+	"github.com/gravitational/teleport-plugins/lib/credentials"
+	"github.com/gravitational/teleport-plugins/lib/logger"
 )
 
 const (
@@ -78,6 +80,16 @@ func NewTeleportEventsWatcher(
 			client.LoadIdentityFile(c.TeleportIdentityFile),
 			client.LoadKeyPair(c.TeleportCert, c.TeleportKey, c.TeleportCA),
 		},
+	}
+
+	if validCred, err := credentials.CheckIfExpired(config.Credentials); err != nil {
+		log.Warn(err)
+		if !validCred {
+			return nil, trace.BadParameter(
+				"No valid credentials found, this likely means credentials are expired. In this case, please sign new credentials and increase their TTL if needed.",
+			)
+		}
+		log.Info("At least one non-expired credential has been found, continuing startup")
 	}
 
 	client, err := client.New(ctx, config)
@@ -290,7 +302,7 @@ func (t *TeleportEventsWatcher) UpsertLock(ctx context.Context, user string, log
 
 	if period > 0 {
 		t := time.Now()
-		t.Add(period)
+		t = t.Add(period)
 		expires = &t
 	}
 

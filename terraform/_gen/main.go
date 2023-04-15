@@ -1,3 +1,17 @@
+// Copyright 2023 Gravitational, Inc
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package main
 
 import (
@@ -14,8 +28,10 @@ type payload struct {
 	Name string
 	// VarName represents resource variable name (underscored)
 	VarName string
-	// VarName represents api/types resource type name
+	// TypeName represents api/types resource type name
 	TypeName string
+	// IfaceName represents api/types interface for the (usually this is the same as Name)
+	IfaceName string
 	// GetMethod represents API get method name
 	GetMethod string
 	// CreateMethod represents API create method name
@@ -38,6 +54,10 @@ type payload struct {
 	Kind string
 	// DefaultVersion represents the default resource version on create
 	DefaultVersion string
+	// HasStaticID states whether this particular resource has a static (usually 0) Metadata.ID
+	// This is relevant to cache enabled clusters: we use Metadata.ID to check if the resource was updated
+	// Currently, the resources that don't have a dynamic Metadata.ID are strong consistent: oidc, github and saml connectors
+	HasStaticID bool
 }
 
 const (
@@ -52,12 +72,14 @@ var (
 		Name:         "App",
 		TypeName:     "AppV3",
 		VarName:      "app",
+		IfaceName:    "Application",
 		GetMethod:    "GetApp",
 		CreateMethod: "CreateApp",
 		UpdateMethod: "UpdateApp",
 		DeleteMethod: "DeleteApp",
 		ID:           `app.Metadata.Name`,
 		Kind:         "app",
+		HasStaticID:  false,
 	}
 
 	authPreference = payload{
@@ -70,6 +92,7 @@ var (
 		DeleteMethod: "ResetAuthPreference",
 		ID:           `"auth_preference"`,
 		Kind:         "cluster_auth_preference",
+		HasStaticID:  false,
 	}
 
 	clusterNetworking = payload{
@@ -82,6 +105,7 @@ var (
 		DeleteMethod: "ResetClusterNetworkingConfig",
 		ID:           `"cluster_networking_config"`,
 		Kind:         "cluster_networking_config",
+		HasStaticID:  false,
 	}
 
 	database = payload{
@@ -94,6 +118,7 @@ var (
 		DeleteMethod: "DeleteDatabase",
 		ID:           `database.Metadata.Name`,
 		Kind:         "db",
+		HasStaticID:  false,
 	}
 
 	githubConnector = payload{
@@ -107,6 +132,7 @@ var (
 		WithSecrets:  "true",
 		ID:           "githubConnector.Metadata.Name",
 		Kind:         "github",
+		HasStaticID:  true,
 	}
 
 	oidcConnector = payload{
@@ -120,6 +146,7 @@ var (
 		WithSecrets:  "true",
 		ID:           "oidcConnector.Metadata.Name",
 		Kind:         "oidc",
+		HasStaticID:  true,
 	}
 
 	samlConnector = payload{
@@ -133,6 +160,7 @@ var (
 		WithSecrets:  "true",
 		ID:           "samlConnector.Metadata.Name",
 		Kind:         "saml",
+		HasStaticID:  true,
 	}
 
 	provisionToken = payload{
@@ -146,19 +174,20 @@ var (
 		ID:                 "provisionToken.Metadata.Name",
 		RandomMetadataName: true,
 		Kind:               "token",
+		HasStaticID:        false,
 	}
 
 	role = payload{
-		Name:           "Role",
-		TypeName:       "RoleV5",
-		VarName:        "role",
-		GetMethod:      "GetRole",
-		CreateMethod:   "UpsertRole",
-		UpdateMethod:   "UpsertRole",
-		DeleteMethod:   "DeleteRole",
-		ID:             "role.Metadata.Name",
-		Kind:           "role",
-		DefaultVersion: "v4", // TODO (Joerger)
+		Name:         "Role",
+		TypeName:     "RoleV6",
+		VarName:      "role",
+		GetMethod:    "GetRole",
+		CreateMethod: "UpsertRole",
+		UpdateMethod: "UpsertRole",
+		DeleteMethod: "DeleteRole",
+		ID:           "role.Metadata.Name",
+		Kind:         "role",
+		HasStaticID:  false,
 	}
 
 	sessionRecording = payload{
@@ -171,6 +200,7 @@ var (
 		DeleteMethod: "ResetSessionRecordingConfig",
 		ID:           `"session_recording_config"`,
 		Kind:         "session_recording_config",
+		HasStaticID:  false,
 	}
 
 	trustedCluster = payload{
@@ -184,6 +214,7 @@ var (
 		UpsertMethodArity: 2,
 		ID:                "trustedCluster.Metadata.Name",
 		Kind:              "trusted_cluster",
+		HasStaticID:       false,
 	}
 
 	user = payload{
@@ -198,6 +229,7 @@ var (
 		GetWithoutContext: true,
 		ID:                "user.Metadata.Name",
 		Kind:              "user",
+		HasStaticID:       false,
 	}
 )
 

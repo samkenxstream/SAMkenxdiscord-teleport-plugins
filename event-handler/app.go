@@ -20,12 +20,13 @@ import (
 	"context"
 	"time"
 
-	"github.com/gravitational/teleport-plugins/lib"
-	"github.com/gravitational/teleport-plugins/lib/backoff"
-	"github.com/gravitational/teleport-plugins/lib/logger"
 	"github.com/gravitational/trace"
 	"github.com/jonboulle/clockwork"
 	"github.com/sirupsen/logrus"
+
+	"github.com/gravitational/teleport-plugins/lib"
+	"github.com/gravitational/teleport-plugins/lib/backoff"
+	"github.com/gravitational/teleport-plugins/lib/logger"
 )
 
 // App is the app structure
@@ -227,5 +228,8 @@ func (a *App) setStartTime(ctx context.Context, s *State) error {
 
 // RegisterSession registers new session
 func (a *App) RegisterSession(ctx context.Context, e *TeleportEvent) {
-	a.sessionEventsJob.RegisterSession(ctx, e)
+	log := logger.Get(ctx)
+	if err := a.sessionEventsJob.RegisterSession(ctx, e); err != nil {
+		log.Error("Registering session: ", err)
+	}
 }

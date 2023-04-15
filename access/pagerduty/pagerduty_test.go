@@ -27,19 +27,17 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/gravitational/teleport-plugins/lib"
-	"github.com/gravitational/teleport-plugins/lib/logger"
-	. "github.com/gravitational/teleport-plugins/lib/testing"
-	"github.com/gravitational/teleport-plugins/lib/testing/integration"
 	"github.com/gravitational/teleport/api/client/proto"
 	"github.com/gravitational/teleport/api/types"
 	"github.com/gravitational/teleport/api/types/wrappers"
 	"github.com/gravitational/trace"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/gravitational/teleport-plugins/lib"
+	"github.com/gravitational/teleport-plugins/lib/logger"
+	"github.com/gravitational/teleport-plugins/lib/testing/integration"
 )
 
 const (
@@ -53,7 +51,7 @@ const (
 )
 
 type PagerdutySuite struct {
-	Suite
+	integration.Suite
 	appConfig        Config
 	currentRequestor string
 	userNames        struct {
@@ -85,7 +83,8 @@ func (s *PagerdutySuite) SetupSuite() {
 	t := s.T()
 
 	logger.Init()
-	logger.Setup(logger.Config{Severity: "debug"})
+	err = logger.Setup(logger.Config{Severity: "debug"})
+	require.NoError(t, err)
 	s.raceNumber = 2 * runtime.GOMAXPROCS(0)
 	me, err := user.Current()
 	require.NoError(t, err)
@@ -133,7 +132,7 @@ func (s *PagerdutySuite) SetupSuite() {
 		conditions.Request.Thresholds = []types.AccessReviewThreshold{types.AccessReviewThreshold{Approve: 2, Deny: 2}}
 	}
 	// This is the role for testing notification incident creation.
-	role, err := bootstrap.AddRole("foo", types.RoleSpecV5{Allow: conditions})
+	role, err := bootstrap.AddRole("foo", types.RoleSpecV6{Allow: conditions})
 	require.NoError(t, err)
 
 	user, err := bootstrap.AddUserWithRoles(me.Username+"@example.com", role.GetName())
@@ -143,7 +142,7 @@ func (s *PagerdutySuite) SetupSuite() {
 	if teleportFeatures.AdvancedAccessWorkflows {
 		// Set up TWO users who can review access requests to role "editor".
 
-		role, err = bootstrap.AddRole("foo-reviewer", types.RoleSpecV5{
+		role, err = bootstrap.AddRole("foo-reviewer", types.RoleSpecV6{
 			Allow: types.RoleConditions{
 				ReviewRequests: &types.AccessReviewConditions{Roles: []string{"editor"}},
 			},
@@ -160,7 +159,7 @@ func (s *PagerdutySuite) SetupSuite() {
 
 		// This is the role that needs exactly one approval review for an access request to be approved.
 		// It's handy to test auto-approval scenarios so we also put "pagerduty_services" annotation.
-		role, err = bootstrap.AddRole("bar", types.RoleSpecV5{
+		role, err = bootstrap.AddRole("bar", types.RoleSpecV6{
 			Allow: types.RoleConditions{
 				Request: &types.AccessRequestConditions{
 					Roles: []string{"editor"},
@@ -178,7 +177,7 @@ func (s *PagerdutySuite) SetupSuite() {
 
 		// This is the role with a maximum possible setup: both "pagerduty_notify_service" and
 		// "pagerduty_services" annotations and threshold.
-		role, err = bootstrap.AddRole("foo-bar", types.RoleSpecV5{
+		role, err = bootstrap.AddRole("foo-bar", types.RoleSpecV6{
 			Allow: types.RoleConditions{
 				Request: &types.AccessRequestConditions{
 					Roles: []string{"editor"},
@@ -213,7 +212,7 @@ func (s *PagerdutySuite) SetupSuite() {
 
 	// Set up plugin user.
 
-	role, err = bootstrap.AddRole("access-pagerduty", types.RoleSpecV5{Allow: conditions})
+	role, err = bootstrap.AddRole("access-pagerduty", types.RoleSpecV6{Allow: conditions})
 	require.NoError(t, err)
 
 	user, err = bootstrap.AddUserWithRoles("access-pagerduty", role.GetName())
@@ -264,7 +263,8 @@ func (s *PagerdutySuite) SetupSuite() {
 func (s *PagerdutySuite) SetupTest() {
 	t := s.T()
 
-	logger.Setup(logger.Config{Severity: "debug"})
+	err := logger.Setup(logger.Config{Severity: "debug"})
+	require.NoError(t, err)
 
 	fakePagerduty := NewFakePagerduty(s.raceNumber)
 	t.Cleanup(fakePagerduty.Close)
@@ -386,7 +386,8 @@ func (s *PagerdutySuite) TestApproval() {
 	incident, err := s.fakePagerduty.CheckNewIncident(s.Context())
 	require.NoError(t, err, "no new incidents stored")
 
-	s.ruler().ApproveAccessRequest(s.Context(), req.GetName(), "okay")
+	err = s.ruler().ApproveAccessRequest(s.Context(), req.GetName(), "okay")
+	require.NoError(t, err)
 
 	note, err := s.fakePagerduty.CheckNewIncidentNote(s.Context())
 	require.NoError(t, err)
@@ -409,7 +410,8 @@ func (s *PagerdutySuite) TestDenial() {
 	incident, err := s.fakePagerduty.CheckNewIncident(s.Context())
 	require.NoError(t, err, "no new incidents stored")
 
-	s.ruler().DenyAccessRequest(s.Context(), req.GetName(), "not okay")
+	err = s.ruler().DenyAccessRequest(s.Context(), req.GetName(), "not okay")
+	require.NoError(t, err)
 
 	note, err := s.fakePagerduty.CheckNewIncidentNote(s.Context())
 	require.NoError(t, err)
@@ -786,7 +788,8 @@ func (s *PagerdutySuite) TestRace() {
 		t.Skip("Doesn't work in OSS version")
 	}
 
-	logger.Setup(logger.Config{Severity: "info"}) // Turn off noisy debug logging
+	err := logger.Setup(logger.Config{Severity: "info"}) // Turn off noisy debug logging
+	require.NoError(t, err)
 
 	s.SetContextTimeout(20 * time.Second)
 	s.startApp()

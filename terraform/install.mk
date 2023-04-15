@@ -1,9 +1,10 @@
-VERSION=9.1.0
+VERSION=12.1.0
 
 OS ?= $(shell go env GOOS)
 ARCH ?= $(shell go env GOARCH)
 TERRAFORM_ARCH=$(OS)_$(ARCH)
-PROVIDER_PATH = ~/.terraform.d/plugins/gravitational.com/teleport/teleport/$(VERSION)/$(TERRAFORM_ARCH)/
+
+PROVIDER_PATH = ~/.terraform.d/plugins/terraform.releases.teleport.dev/gravitational/teleport/$(VERSION)/$(TERRAFORM_ARCH)/
 
 .PHONY: install
 install: build

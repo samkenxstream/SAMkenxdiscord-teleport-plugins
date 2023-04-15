@@ -1,0 +1,26 @@
+name: Plugins Lint (Terraform)
+run-name: Plugins Lint (Terraform) - ${{ github.run_id }} - @${{ github.actor }}
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - '**.tf'
+      - '**.tf.json'
+      - '**.hcl'
+  pull_request:
+    paths:
+      - '**.tf'
+      - '**.tf.json'
+      - '**.hcl'
+  workflow_dispatch:
+
+jobs:
+  terraform-lint:
+    name: Plugins Lint (Terraform)
+    uses: gravitational/shared-workflows/.github/workflows/terraform-lint.yaml@main
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+      security-events: write

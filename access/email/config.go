@@ -18,18 +18,22 @@ package main
 
 import (
 	_ "embed"
+	"fmt"
 
-	"github.com/gravitational/teleport-plugins/access/config"
-	"github.com/gravitational/teleport-plugins/lib"
-	"github.com/gravitational/teleport-plugins/lib/logger"
 	"github.com/gravitational/teleport/api/types"
 	"github.com/gravitational/trace"
 	"github.com/pelletier/go-toml"
+	"gopkg.in/mail.v2"
+
+	"github.com/gravitational/teleport-plugins/access/common"
+	"github.com/gravitational/teleport-plugins/lib"
+	"github.com/gravitational/teleport-plugins/lib/logger"
 )
 
 // DeliveryConfig represents email recipients config
 type DeliveryConfig struct {
-	Sender     string
+	Sender string
+	// DELETE IN 12.0.0
 	Recipients []string
 }
 
@@ -43,21 +47,23 @@ type MailgunConfig struct {
 
 // SMTPConfig is SMTP-specific configuration options
 type SMTPConfig struct {
-	Host         string
-	Port         int
-	Username     string
-	Password     string
-	PasswordFile string `toml:"password_file"`
+	Host               string
+	Port               int
+	Username           string
+	Password           string
+	PasswordFile       string `toml:"password_file"`
+	StartTLSPolicy     string `toml:"starttls_policy"`
+	MailStartTLSPolicy mail.StartTLSPolicy
 }
 
 // Config stores the full configuration for the teleport-email plugin to run.
 type Config struct {
-	Teleport         lib.TeleportConfig   `toml:"teleport"`
-	Mailgun          *MailgunConfig       `toml:"mailgun"`
-	SMTP             *SMTPConfig          `toml:"smtp"`
-	Delivery         DeliveryConfig       `toml:"delivery"`
-	RoleToRecipients config.RecipientsMap `toml:"role_to_recipients"`
-	Log              logger.Config        `toml:"log"`
+	Teleport         lib.TeleportConfig      `toml:"teleport"`
+	Mailgun          *MailgunConfig          `toml:"mailgun"`
+	SMTP             *SMTPConfig             `toml:"smtp"`
+	Delivery         DeliveryConfig          `toml:"delivery"`
+	RoleToRecipients common.RawRecipientsMap `toml:"role_to_recipients"`
+	Log              logger.Config           `toml:"log"`
 }
 
 // TODO: Replace auth_server with addr once it is merged
@@ -85,6 +91,7 @@ port = 587
 username = "username@gmail.com"
 password = ""
 # password_file = "/var/lib/teleport/plugins/email/smtp_password"
+starttls_policy = "mandatory" # mandatory|opportunistic|disabled
 
 [delivery]
 sender = "noreply@example.com" # From: email address
@@ -175,7 +182,24 @@ func (c *SMTPConfig) CheckAndSetDefaults() error {
 		}
 	}
 
+	if c.MailStartTLSPolicy, err = mailStartTLSPolicy(c.StartTLSPolicy); err != nil {
+		return trace.BadParameter("invalid smtp.starttls_policy: %v", err)
+	}
+
 	return nil
+}
+
+func mailStartTLSPolicy(p string) (mail.StartTLSPolicy, error) {
+	switch p {
+	case "mandatory", "":
+		return mail.MandatoryStartTLS, nil
+	case "opportunistic":
+		return mail.OpportunisticStartTLS, nil
+	case "disabled":
+		return mail.NoStartTLS, nil
+	default:
+		return mail.MandatoryStartTLS, fmt.Errorf("unsupported starttls_policy %q - provide one of mandatory, opportunistic, disabled or leave empty to default to mandatory", p)
+	}
 }
 
 // CheckAndSetDefaults checks the config struct for any logical errors, and sets default values
@@ -194,7 +218,7 @@ func (c *Config) CheckAndSetDefaults() error {
 			return trace.BadParameter("provide either delivery.recipients or role_to_recipients, not both")
 		}
 
-		c.RoleToRecipients = config.RecipientsMap{
+		c.RoleToRecipients = common.RawRecipientsMap{
 			types.Wildcard: c.Delivery.Recipients,
 		}
 		c.Delivery.Recipients = nil

@@ -20,16 +20,17 @@ import (
 	"context"
 	"time"
 
-	"github.com/gravitational/teleport-plugins/lib"
-	"github.com/gravitational/teleport-plugins/lib/logger"
-	"github.com/gravitational/teleport-plugins/lib/watcherjob"
 	"github.com/gravitational/teleport/api/client"
 	"github.com/gravitational/teleport/api/client/proto"
 	"github.com/gravitational/teleport/api/types"
+	"github.com/gravitational/trace"
 	"google.golang.org/grpc"
 	grpcbackoff "google.golang.org/grpc/backoff"
 
-	"github.com/gravitational/trace"
+	"github.com/gravitational/teleport-plugins/lib"
+	"github.com/gravitational/teleport-plugins/lib/credentials"
+	"github.com/gravitational/teleport-plugins/lib/logger"
+	"github.com/gravitational/teleport-plugins/lib/watcherjob"
 )
 
 const (
@@ -124,6 +125,17 @@ func (a *App) run(ctx context.Context) error {
 func (a *App) init(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, initTimeout)
 	defer cancel()
+	log := logger.Get(ctx)
+
+	if validCred, err := credentials.CheckIfExpired(a.conf.Teleport.Credentials()); err != nil {
+		log.Warn(err)
+		if !validCred {
+			return trace.BadParameter(
+				"No valid credentials found, this likely means credentials are expired. In this case, please sign new credentials and increase their TTL if needed.",
+			)
+		}
+		log.Info("At least one non-expired credential has been found, continuing startup")
+	}
 
 	var (
 		err          error
@@ -136,7 +148,10 @@ func (a *App) init(ctx context.Context) error {
 	if a.apiClient, err = client.New(ctx, client.Config{
 		Addrs:       a.conf.Teleport.GetAddrs(),
 		Credentials: a.conf.Teleport.Credentials(),
-		DialOpts:    []grpc.DialOption{grpc.WithConnectParams(grpc.ConnectParams{Backoff: bk, MinConnectTimeout: initTimeout})},
+		DialOpts: []grpc.DialOption{
+			grpc.WithConnectParams(grpc.ConnectParams{Backoff: bk, MinConnectTimeout: initTimeout}),
+			grpc.WithReturnConnectionError(),
+		},
 	}); err != nil {
 		return trace.Wrap(err)
 	}
@@ -296,7 +311,7 @@ func (a *App) getEmailRecipients(ctx context.Context, roles, suggestedReviewers 
 	log := logger.Get(ctx)
 	validEmailRecipients := []string{}
 
-	recipients := a.conf.RoleToRecipients.GetRecipientsFor(roles, suggestedReviewers)
+	recipients := a.conf.RoleToRecipients.GetRawRecipientsFor(roles, suggestedReviewers)
 
 	for _, recipient := range recipients {
 		if !lib.IsEmail(recipient) {

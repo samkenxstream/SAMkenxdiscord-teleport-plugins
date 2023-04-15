@@ -79,6 +79,14 @@ func (s *TerraformSuite) TestImportSAMLConnector() {
 	id := "test_import"
 	name := r + "." + id
 
+	// Set up role.
+	roleName := "rolex"
+	rolexSpec, err := types.NewRole(roleName, types.RoleSpecV6{})
+	require.NoError(s.T(), err)
+
+	err = s.client.UpsertRole(s.Context(), rolexSpec)
+	require.NoError(s.T(), err)
+
 	samlConnector := &types.SAMLConnectorV2{
 		Metadata: types.Metadata{
 			Name: id,
@@ -101,10 +109,17 @@ func (s *TerraformSuite) TestImportSAMLConnector() {
 </md:IDPSSODescriptor>
 </md:EntityDescriptor>				
 `,
+			AttributesToRoles: []types.AttributeMapping{
+				{
+					Name:  "map attrx to rolex",
+					Value: "attrx",
+					Roles: []string{roleName},
+				},
+			},
 		},
 	}
 
-	err := samlConnector.CheckAndSetDefaults()
+	err = samlConnector.CheckAndSetDefaults()
 	require.NoError(s.T(), err)
 
 	err = s.client.UpsertSAMLConnector(s.Context(), samlConnector)

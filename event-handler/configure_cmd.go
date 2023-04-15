@@ -22,7 +22,7 @@ import (
 	_ "embed"
 	"encoding/hex"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"math/big"
 	"os"
 	"path"
@@ -34,7 +34,7 @@ import (
 	"github.com/gravitational/teleport-plugins/event-handler/lib"
 )
 
-// ConfigureCmd represents configure command behaviour.
+// ConfigureCmd represents configure command behavior.
 //
 // teleport-event-handler configure .
 //
@@ -83,7 +83,7 @@ type ConfigureCmd struct {
 
 var (
 	// maxBigInt is serial number random max
-	maxBigInt *big.Int = new(big.Int).Lsh(big.NewInt(1), 128)
+	maxBigInt = new(big.Int).Lsh(big.NewInt(1), 128)
 
 	//go:embed tpl/teleport-event-handler-role.yaml.tpl
 	roleTpl string
@@ -112,7 +112,7 @@ const (
 	confFileName = "teleport-event-handler.toml"
 
 	// guideURL is getting started guide URL
-	guideURL = "https://goteleport.com/docs/setup/guides/fluentd"
+	guideURL = "https://goteleport.com/docs/management/export-audit-events/fluentd/"
 )
 
 // RunConfigureCmd initializes and runs configure command
@@ -287,7 +287,7 @@ func (c *ConfigureCmd) getPwd() (string, error) {
 	stat, _ := os.Stdin.Stat()
 	if (stat.Mode() & os.ModeCharDevice) == 0 {
 		// Get password from provided file
-		pwdFromStdin, err := ioutil.ReadAll(os.Stdin)
+		pwdFromStdin, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			return "", err
 		}
@@ -311,7 +311,7 @@ func (c *ConfigureCmd) writeFile(path string, content []byte) error {
 		return nil
 	}
 
-	err := ioutil.WriteFile(path, content, perms)
+	err := os.WriteFile(path, content, perms)
 	if err != nil {
 		return trace.Wrap(err)
 	}

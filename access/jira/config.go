@@ -19,14 +19,15 @@ package main
 import (
 	"crypto/tls"
 	"crypto/x509"
-	"io/ioutil"
+	"io"
 	"os"
 	"strings"
 
-	"github.com/gravitational/teleport-plugins/lib"
-	"github.com/gravitational/teleport-plugins/lib/logger"
 	"github.com/gravitational/trace"
 	"github.com/pelletier/go-toml"
+
+	"github.com/gravitational/teleport-plugins/lib"
+	"github.com/gravitational/teleport-plugins/lib/logger"
 )
 
 type Config struct {
@@ -153,7 +154,7 @@ func (c *Config) LoadTLSConfig() (*tls.Config, error) {
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
-	caCerts, err := ioutil.ReadAll(caFile)
+	caCerts, err := io.ReadAll(caFile)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}

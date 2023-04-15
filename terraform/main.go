@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,14 +17,18 @@ package main
 
 import (
 	"context"
+	"log"
+
+	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 
 	"github.com/gravitational/teleport-plugins/terraform/provider"
-
-	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 )
 
 func main() {
-	tfsdk.Serve(context.Background(), provider.New, tfsdk.ServeOpts{
-		Name: "teleport",
+	err := providerserver.Serve(context.Background(), provider.New, providerserver.ServeOpts{
+		Address: "terraform.releases.teleport.dev/gravitational/teleport",
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
 }

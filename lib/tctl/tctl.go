@@ -21,9 +21,10 @@ import (
 	"os/exec"
 	"regexp"
 
-	"github.com/gravitational/teleport-plugins/lib/logger"
 	"github.com/gravitational/teleport/api/types"
 	"github.com/gravitational/trace"
+
+	"github.com/gravitational/teleport-plugins/lib/logger"
 )
 
 var regexpStatusCAPin = regexp.MustCompile(`CA pin +(sha256:[a-zA-Z0-9]+)`)
@@ -59,7 +60,7 @@ func (tctl Tctl) Sign(ctx context.Context, username, format, outPath string) err
 	log.Debugf("Running %s", cmd)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		log.WithError(err).Debug("tctl auth sign failed:", string(output))
+		log.WithError(err).WithField("args", args).Debug("tctl auth sign failed:", string(output))
 		return trace.Wrap(err, "tctl auth sign failed")
 	}
 	return nil

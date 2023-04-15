@@ -25,17 +25,20 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
 
-	"github.com/gravitational/teleport-plugins/lib"
 	"github.com/gravitational/teleport/api/client"
 	"github.com/gravitational/trace"
-	log "github.com/sirupsen/logrus"
-
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/grpclog"
+
+	"github.com/gravitational/teleport-plugins/lib"
 )
 
 const (
@@ -43,10 +46,17 @@ const (
 	minServerVersion = "6.1.0-beta.1"
 )
 
+type RetryConfig struct {
+	Base     time.Duration
+	Cap      time.Duration
+	MaxTries int
+}
+
 // Provider Teleport Provider
 type Provider struct {
-	configured bool
-	Client     *client.Client
+	configured  bool
+	Client      *client.Client
+	RetryConfig RetryConfig
 }
 
 // providerData provider schema struct
@@ -73,6 +83,16 @@ type providerData struct {
 	IdentityFilePath types.String `tfsdk:"identity_file_path"`
 	// IdentityFile identity file content
 	IdentityFile types.String `tfsdk:"identity_file"`
+	// IdentityFile identity file content encoded in base64
+	IdentityFileBase64 types.String `tfsdk:"identity_file_base64"`
+	// RetryBaseDuration is used to setup the retry algorithm when the API returns 'not found'
+	RetryBaseDuration types.String `tfsdk:"retry_base_duration"`
+	// RetryCapDuration is used to setup the retry algorithm when the API returns 'not found'
+	RetryCapDuration types.String `tfsdk:"retry_cap_duration"`
+	// RetryMaxTries sets the max number of tries when retrying
+	RetryMaxTries types.String `tfsdk:"retry_max_tries"`
+	// DialTimeout sets timeout when trying to connect to the server.
+	DialTimeoutDuration types.String `tfsdk:"dial_timeout_duration"`
 }
 
 // New returns an empty provider struct
@@ -141,6 +161,36 @@ func (p *Provider) GetSchema(_ context.Context) (tfsdk.Schema, diag.Diagnostics)
 				Optional:    true,
 				Description: "Teleport identity file content.",
 			},
+			"identity_file_base64": {
+				Type:        types.StringType,
+				Sensitive:   true,
+				Optional:    true,
+				Description: "Teleport identity file content base64 encoded.",
+			},
+			"retry_base_duration": {
+				Type:        types.StringType,
+				Sensitive:   false,
+				Optional:    true,
+				Description: "Retry algorithm when the API returns 'not found': base duration between retries (https://pkg.go.dev/time#ParseDuration).",
+			},
+			"retry_cap_duration": {
+				Type:        types.StringType,
+				Sensitive:   false,
+				Optional:    true,
+				Description: "Retry algorithm when the API returns 'not found': max duration between retries (https://pkg.go.dev/time#ParseDuration).",
+			},
+			"retry_max_tries": {
+				Type:        types.StringType,
+				Sensitive:   false,
+				Optional:    true,
+				Description: "Retry algorithm when the API returns 'not found': max tries.",
+			},
+			"dial_timeout_duration": {
+				Type:        types.StringType,
+				Sensitive:   false,
+				Optional:    true,
+				Description: "DialTimeout sets timeout when trying to connect to the server.",
+			},
 		},
 	}, nil
 }
@@ -181,6 +231,11 @@ func (p *Provider) Configure(ctx context.Context, req tfsdk.ConfigureProviderReq
 	profileDir := p.stringFromConfigOrEnv(config.ProfileDir, "TF_TELEPORT_PROFILE_PATH", "")
 	identityFilePath := p.stringFromConfigOrEnv(config.IdentityFilePath, "TF_TELEPORT_IDENTITY_FILE_PATH", "")
 	identityFile := p.stringFromConfigOrEnv(config.IdentityFile, "TF_TELEPORT_IDENTITY_FILE", "")
+	identityFileBase64 := p.stringFromConfigOrEnv(config.IdentityFileBase64, "TF_TELEPORT_IDENTITY_FILE_BASE64", "")
+	retryBaseDurationStr := p.stringFromConfigOrEnv(config.RetryBaseDuration, "TF_TELEPORT_RETRY_BASE_DURATION", "1s")
+	retryCapDurationStr := p.stringFromConfigOrEnv(config.RetryCapDuration, "TF_TELEPORT_RETRY_CAP_DURATION", "5s")
+	maxTriesStr := p.stringFromConfigOrEnv(config.RetryMaxTries, "TF_TELEPORT_RETRY_MAX_TRIES", "10")
+	dialTimeoutDurationStr := p.stringFromConfigOrEnv(config.DialTimeoutDuration, "TF_TELEPORT_DIAL_TIMEOUT_DURATION", "30s")
 
 	if !p.validateAddr(addr, resp) {
 		return
@@ -231,12 +286,39 @@ func (p *Provider) Configure(ctx context.Context, req tfsdk.ConfigureProviderReq
 		creds = append(creds, client.LoadIdentityFileFromString(identityFile))
 	}
 
+	if identityFileBase64 != "" {
+		log.Debug("Using auth from base64 encoded identity file provided with environment variable TF_TELEPORT_IDENTITY_FILE_BASE64")
+		decoded, err := base64.StdEncoding.DecodeString(identityFileBase64)
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Failed to decode Identity file using base 64",
+				fmt.Sprintf("Error when trying to decode: %v", err),
+			)
+			return
+		}
+
+		creds = append(creds, client.LoadIdentityFileFromString(string(decoded)))
+	}
+
 	log.WithField("dir", profileDir).WithField("name", profileName).Debug("Using profile as the default auth method")
 	creds = append(creds, client.LoadProfile(profileDir, profileName))
+
+	dialTimeoutDuration, err := time.ParseDuration(dialTimeoutDurationStr)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Failed to parse Dial Timeout Duration Cap Duration",
+			fmt.Sprintf("Please check if dial_timeout_duration (or TF_TELEPORT_DIAL_TIMEOUT_DURATION) is set correctly. Error: %s", err),
+		)
+		return
+	}
 
 	client, err := client.New(ctx, client.Config{
 		Addrs:       []string{addr},
 		Credentials: creds,
+		DialTimeout: dialTimeoutDuration,
+		DialOpts: []grpc.DialOption{
+			grpc.WithReturnConnectionError(),
+		},
 	})
 
 	if err != nil {
@@ -249,6 +331,38 @@ func (p *Provider) Configure(ctx context.Context, req tfsdk.ConfigureProviderReq
 		return
 	}
 
+	retryBaseDuration, err := time.ParseDuration(retryBaseDurationStr)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Failed to parse Retry Base Duration",
+			fmt.Sprintf("Please check if retry_cap_duration (or TF_TELEPORT_RETRY_BASE_DURATION) is set correctly. Error: %s", err),
+		)
+		return
+	}
+
+	retryCapDuration, err := time.ParseDuration(retryCapDurationStr)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Failed to parse Retry Cap Duration",
+			fmt.Sprintf("Please check if retry_cap_duration (or TF_TELEPORT_RETRY_CAP_DURATION) is set correctly. Error: %s", err),
+		)
+		return
+	}
+
+	maxTries, err := strconv.ParseUint(maxTriesStr, 10, 32)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Failed to parse Retry Max Tries",
+			fmt.Sprintf("Please check if retry_max_tries (or TF_TELEPORT_RETRY_MAX_TRIES) is set correctly. Error: %s", err),
+		)
+		return
+	}
+
+	p.RetryConfig = RetryConfig{
+		Base:     retryBaseDuration,
+		Cap:      retryCapDuration,
+		MaxTries: int(maxTries),
+	}
 	p.Client = client
 	p.configured = true
 }
@@ -287,11 +401,13 @@ func (p *Provider) stringFromConfigOrEnv(value types.String, env string, def str
 		}
 	}
 
-	if value.Value == "" {
+	configValue := strings.TrimSpace(value.Value)
+
+	if configValue == "" {
 		return def
 	}
 
-	return value.Value
+	return configValue
 }
 
 // validateAddr validates passed addr
@@ -452,6 +568,7 @@ func (p *Provider) GetResources(_ context.Context) (map[string]tfsdk.ResourceTyp
 		"teleport_session_recording_config":  resourceTeleportSessionRecordingConfigType{},
 		"teleport_trusted_cluster":           resourceTeleportTrustedClusterType{},
 		"teleport_user":                      resourceTeleportUserType{},
+		"teleport_bot":                       resourceTeleportBotType{},
 	}, nil
 }
 

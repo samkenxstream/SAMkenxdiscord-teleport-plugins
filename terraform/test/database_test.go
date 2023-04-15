@@ -17,6 +17,8 @@ limitations under the License.
 package test
 
 import (
+	"time"
+
 	"github.com/gravitational/teleport/api/types"
 	"github.com/gravitational/trace"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
@@ -44,9 +46,9 @@ func (s *TerraformSuite) TestDatabase() {
 				Config: s.getFixture("database_0_create.tf"),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr(name, "kind", "db"),
-					resource.TestCheckResourceAttr(name, "metadata.expires", "2022-10-12T07:20:50Z"),
+					resource.TestCheckResourceAttr(name, "metadata.expires", "2032-10-12T07:20:50Z"),
 					resource.TestCheckResourceAttr(name, "spec.protocol", "postgres"),
-					resource.TestCheckResourceAttr(name, "spec.uri", "localhost"),
+					resource.TestCheckResourceAttr(name, "spec.uri", "localhost:5432"),
 				),
 			},
 			{
@@ -57,9 +59,9 @@ func (s *TerraformSuite) TestDatabase() {
 				Config: s.getFixture("database_1_update.tf"),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr(name, "kind", "db"),
-					resource.TestCheckResourceAttr(name, "metadata.expires", "2022-10-12T07:20:50Z"),
+					resource.TestCheckResourceAttr(name, "metadata.expires", "2032-10-12T07:20:50Z"),
 					resource.TestCheckResourceAttr(name, "spec.protocol", "postgres"),
-					resource.TestCheckResourceAttr(name, "spec.uri", "example.com"),
+					resource.TestCheckResourceAttr(name, "spec.uri", "example.com:5432"),
 				),
 			},
 			{
@@ -72,7 +74,7 @@ func (s *TerraformSuite) TestDatabase() {
 
 func (s *TerraformSuite) TestImportDatabase() {
 	r := "teleport_database"
-	id := "test_import"
+	id := "test-import"
 	name := r + "." + id
 
 	database := &types.DatabaseV3{
@@ -89,6 +91,15 @@ func (s *TerraformSuite) TestImportDatabase() {
 
 	err = s.client.CreateDatabase(s.Context(), database)
 	require.NoError(s.T(), err)
+
+	require.Eventually(s.T(), func() bool {
+		_, err := s.client.GetDatabase(s.Context(), database.GetName())
+		if trace.IsNotFound(err) {
+			return false
+		}
+		require.NoError(s.T(), err)
+		return true
+	}, 5*time.Second, time.Second)
 
 	resource.Test(s.T(), resource.TestCase{
 		ProtoV6ProviderFactories: s.terraformProviders,

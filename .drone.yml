@@ -19,18 +19,23 @@ workspace:
 
 steps:
   - name: Run linter
-    image: golangci/golangci-lint:v1.39.0
+    image: golangci/golangci-lint:v1.51.2
     commands:
       - make lint
 
   - name: Run tests
-    image: golang:1.17.9
+    image: golang:1.20.1
     environment:
       TELEPORT_ENTERPRISE_LICENSE:
         from_secret: TELEPORT_ENTERPRISE_LICENSE
-      TELEPORT_GET_VERSION: v9.0.4
+      TELEPORT_GET_VERSION: v12.1.0
+      TERRAFORM_VERSION: 1.3.3
     commands:
       - echo Testing plugins against Teleport $TELEPORT_GET_VERSION
+      - curl -fsSL https://apt.releases.hashicorp.com/gpg | apt-key add -
+      - apt update && apt install -y software-properties-common
+      - apt-add-repository "deb [arch=amd64] https://apt.releases.hashicorp.com $(lsb_release -cs) main"
+      - apt update && apt install -y terraform=$TERRAFORM_VERSION
       - make test
 
 ---
@@ -60,25 +65,48 @@ workspace:
   path: /tmp/teleport-plugins/test-darwin
 
 steps:
-  - name: Clean up exec runner storage
+  - name: Install Go Toolchain
+    environment:
+      GO_VERSION: go1.20.1
+      TOOLCHAIN_DIR: /tmp/teleport-plugins/${DRONE_BUILD_NUMBER}-${DRONE_BUILD_CREATED}/toolchains
+      TERRAFORM_VERSION: 1.3.3
+      TERRAFORM_ARCHIVE: terraform_1.3.3_darwin_amd64.zip
     commands:
-      # This will remove subdirectories under pkg/mod which 0400 permissions.
-      # See for more details: https://github.com/golang/go/issues/27455
-      - go clean -modcache
-      - chmod -R u+rw /tmp/teleport-plugins/test-darwin/go
-      - rm -rf /tmp/teleport-plugins/test-darwin/go
-      - mkdir -p /tmp/teleport-plugins/test-darwin/go
+      - set -u
+      - mkdir -p $TOOLCHAIN_DIR
+      - mkdir -p $TOOLCHAIN_DIR/terraform
+      - curl --silent -O https://dl.google.com/go/$GO_VERSION.darwin-amd64.tar.gz
+      - tar -C  $TOOLCHAIN_DIR -xzf $GO_VERSION.darwin-amd64.tar.gz
+      - rm -rf $GO_VERSION.darwin-amd64.tar.gz
+      - curl --silent -O https://releases.hashicorp.com/terraform/$TERRAFORM_VERSION/$TERRAFORM_ARCHIVE
+      - unzip $TERRAFORM_ARCHIVE -d $TOOLCHAIN_DIR/terraform/
 
   - name: Run tests
     environment:
       TELEPORT_ENTERPRISE_LICENSE:
         from_secret: TELEPORT_ENTERPRISE_LICENSE
-      TELEPORT_GET_VERSION: v9.0.4
-      GOPATH: /tmp/teleport-plugins/test-darwin/go
-      GOCACHE: /tmp/teleport-plugins/test-darwin/go/cache
+      TELEPORT_GET_VERSION: v12.1.0
+      GOPATH: /tmp/teleport-plugins/${DRONE_BUILD_NUMBER}-${DRONE_BUILD_CREATED}/go
+      GOCACHE: /tmp/teleport-plugins/${DRONE_BUILD_NUMBER}-${DRONE_BUILD_CREATED}/go/cache
+      TOOLCHAIN_DIR: /tmp/teleport-plugins/${DRONE_BUILD_NUMBER}-${DRONE_BUILD_CREATED}/toolchains
     commands:
+      - export PATH=$TOOLCHAIN_DIR/go/bin:$PATH
       - go version
+      - export PATH=$TOOLCHAIN_DIR/terraform:$PATH
+      - terraform version
+      - ulimit -n 1024
+      - go clean --cache
       - make test
+
+  - name: Clean up toolchains (post)
+    when:
+      status:
+      - success
+      - failure
+    commands:
+      - set -u
+      - chmod -R u+rw /tmp/teleport-plugins/${DRONE_BUILD_NUMBER}-${DRONE_BUILD_CREATED}
+      - rm -rf /tmp/teleport-plugins/${DRONE_BUILD_NUMBER}-${DRONE_BUILD_CREATED}
 
 ---
 kind: pipeline
@@ -104,7 +132,7 @@ workspace:
 
 steps:
   - name: Build artifacts
-    image: golang:1.17.9
+    image: golang:1.20.1
     commands:
       - make build-all
 
@@ -138,22 +166,37 @@ workspace:
   path: /tmp/teleport-plugins/build-darwin
 
 steps:
-  - name: Clean up exec runner storage (pre)
+  - name: Install Go Toolchain
+    environment:
+      GO_VERSION: go1.20.1
+      TOOLCHAIN_DIR: /tmp/teleport-plugins/${DRONE_BUILD_NUMBER}-${DRONE_BUILD_CREATED}/toolchains
     commands:
-      # This will remove subdirectories under pkg/mod which 0400 permissions.
-      # See for more details: https://github.com/golang/go/issues/27455
-      - go clean -modcache
-      - chmod -R u+rw /tmp/teleport-plugins/build-darwin/go
-      - rm -rf /tmp/teleport-plugins/build-darwin/go
-      - mkdir -p /tmp/teleport-plugins/build-darwin/go/cache
+      - set -u
+      - mkdir -p $TOOLCHAIN_DIR
+      - curl --silent -O https://dl.google.com/go/$GO_VERSION.darwin-amd64.tar.gz
+      - tar -C  $TOOLCHAIN_DIR -xzf $GO_VERSION.darwin-amd64.tar.gz
+      - rm -rf $GO_VERSION.darwin-amd64.tar.gz
 
   - name: Build artifacts (darwin)
     environment:
-      GOPATH: /tmp/teleport-plugins/build-darwin/go
-      GOCACHE: /tmp/teleport-plugins/build-darwin/go/cache
+      GOPATH: /tmp/teleport-plugins/${DRONE_BUILD_NUMBER}-${DRONE_BUILD_CREATED}/go
+      GOCACHE: /tmp/teleport-plugins/${DRONE_BUILD_NUMBER}-${DRONE_BUILD_CREATED}/go/cache
+      TOOLCHAIN_DIR: /tmp/teleport-plugins/${DRONE_BUILD_NUMBER}-${DRONE_BUILD_CREATED}/toolchains
     commands:
+      - export PATH=$TOOLCHAIN_DIR/go/bin:$PATH
+      - go version
+      - go clean
       - make build-all
 
+  - name: Clean up toolchains (post)
+    when:
+      status:
+      - success
+      - failure
+    commands:
+      - set -u
+      - chmod -R u+rw /tmp/teleport-plugins/${DRONE_BUILD_NUMBER}-${DRONE_BUILD_CREATED}
+      - rm -rf /tmp/teleport-plugins/${DRONE_BUILD_NUMBER}-${DRONE_BUILD_CREATED}
 ---
 kind: pipeline
 type: kubernetes
@@ -165,8 +208,10 @@ trigger:
   ref:
     include:
       - refs/tags/teleport-gitlab-v*
+      - refs/tags/teleport-discord-v*
       - refs/tags/teleport-jira-v*
       - refs/tags/teleport-mattermost-v*
+      - refs/tags/teleport-msteams-v*
       - refs/tags/teleport-pagerduty-v*
       - refs/tags/teleport-slack-v*
       - refs/tags/teleport-email-v*
@@ -179,7 +224,7 @@ workspace:
 
 steps:
   - name: Build artifacts
-    image: golang:1.17.9
+    image: golang:1.20.1
     commands:
       - mkdir -p build/
       - export PLUGIN_TYPE=$(echo ${DRONE_TAG} | cut -d- -f2)
@@ -189,19 +234,48 @@ steps:
       - for FILE in *.tar.gz; do sha256sum $FILE > $FILE.sha256; done
       - ls -l .
 
-  - name: Upload to S3
-    image: plugins/s3
-    settings:
-      bucket:
-        from_secret: AWS_S3_BUCKET
-      access_key:
+  - name: Assume AWS Role
+    image: amazon/aws-cli
+    environment:
+      AWS_ACCESS_KEY_ID:
         from_secret: AWS_ACCESS_KEY_ID
-      secret_key:
+      AWS_SECRET_ACCESS_KEY:
         from_secret: AWS_SECRET_ACCESS_KEY
-      region: us-west-2
-      source: /go/src/github.com/gravitational/teleport-plugins/build/*
-      target: teleport-plugins/tag/${DRONE_TAG}
-      strip_prefix: /go/src/github.com/gravitational/teleport-plugins/build
+      AWS_ROLE:
+        from_secret: AWS_ROLE
+    commands:
+    - aws sts get-caller-identity
+    - |-
+        printf "[default]\naws_access_key_id = %s\naws_secret_access_key = %s\naws_session_token = %s" \
+          $(aws sts assume-role \
+            --role-arn "$AWS_ROLE" \
+            --role-session-name $(echo "drone-${DRONE_REPO}/${DRONE_BUILD_NUMBER}" | sed "s|/|-|g") \
+            --query "Credentials.[AccessKeyId,SecretAccessKey,SessionToken]" \
+            --output text) \
+            > /root/.aws/credentials
+    - unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+    - aws sts get-caller-identity
+    volumes:
+    - name: awsconfig
+      path: /root/.aws
+
+  - name: Upload to S3
+    image: amazon/aws-cli
+    environment:
+      AWS_S3_BUCKET:
+        from_secret: AWS_S3_BUCKET
+      AWS_REGION: us-west-2
+    commands:
+      - aws sts get-caller-identity
+      - cd build
+      - aws s3 sync . s3://$AWS_S3_BUCKET/teleport-plugins/tag/${DRONE_TAG}/
+    volumes:
+    - name: awsconfig
+      path: /root/.aws
+
+volumes:
+  - name: awsconfig
+    temp: {}
 
 ---
 kind: pipeline
@@ -214,8 +288,10 @@ trigger:
   ref:
     include:
       - refs/tags/teleport-gitlab-v*
+      - refs/tags/teleport-discord-v*
       - refs/tags/teleport-jira-v*
       - refs/tags/teleport-mattermost-v*
+      - refs/tags/teleport-msteams-v*
       - refs/tags/teleport-pagerduty-v*
       - refs/tags/teleport-slack-v*
       - refs/tags/teleport-email-v*
@@ -226,21 +302,44 @@ depends_on:
 steps:
   - name: fetch tags
     image: docker:git
-    commands: 
+    commands:
       - git fetch --tags
+
+  - name: Assume AWS Role
+    image: amazon/aws-cli
+    environment:
+      AWS_ACCESS_KEY_ID:
+        from_secret: PLUGIN_BUILD_USER_STAGING_KEY
+      AWS_SECRET_ACCESS_KEY:
+        from_secret: PLUGIN_BUILD_USER_STAGING_SECRET
+      AWS_ROLE:
+        from_secret: PLUGIN_BUILD_STAGING_AWS_ROLE
+    commands:
+    - aws sts get-caller-identity
+    - |-
+        printf "[default]\naws_access_key_id = %s\naws_secret_access_key = %s\naws_session_token = %s" \
+          $(aws sts assume-role \
+            --role-arn "$AWS_ROLE" \
+            --role-session-name $(echo "drone-${DRONE_REPO}/${DRONE_BUILD_NUMBER}" | sed "s|/|-|g") \
+            --query "Credentials.[AccessKeyId,SecretAccessKey,SessionToken]" \
+            --output text) \
+            > /root/.aws/credentials
+    - unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+    - aws sts get-caller-identity
+    volumes:
+      - name: awsconfig
+        path: /root/.aws
 
   - name: Build and push to ECR
     image: docker:git
     environment:
-      AWS_ACCESS_KEY_ID:
-        from_secret: PLUGIN_DRONE_ECR_KEY
-      AWS_SECRET_ACCESS_KEY:
-        from_secret: PLUGIN_DRONE_ECR_SECRET
       AWS_DEFAULT_REGION: us-west-2
       DOCKER_BUILDKIT: 1
     volumes:
       - name: dockersock
         path: /var/run
+      - name: awsconfig
+        path: /root/.aws
     commands:
       - apk add --no-cache make aws-cli
       - export PLUGIN_TYPE=$(echo ${DRONE_TAG} | cut -d- -f2)
@@ -257,6 +356,69 @@ services:
 
 volumes:
   - name: dockersock
+    temp: {}
+  - name: awsconfig
+    temp: {}
+
+---
+kind: pipeline
+type: kubernetes
+name: tag-build-plugins-helm
+
+trigger:
+  event:
+    - tag
+  ref:
+    include:
+      - refs/tags/v*
+
+steps:
+  - name: Package charts
+    image: alpine/helm:latest
+    commands:
+      - apk add --no-cache make
+      - make helm-package-charts
+
+  - name: Assume AWS Role
+    image: amazon/aws-cli
+    environment:
+      AWS_ACCESS_KEY_ID:
+        from_secret: PLUGIN_BUILD_USER_STAGING_KEY
+      AWS_SECRET_ACCESS_KEY:
+        from_secret: PLUGIN_BUILD_USER_STAGING_SECRET
+      AWS_ROLE:
+        from_secret: PLUGIN_BUILD_STAGING_AWS_ROLE
+    commands:
+    - aws sts get-caller-identity
+    - |-
+        printf "[default]\naws_access_key_id = %s\naws_secret_access_key = %s\naws_session_token = %s" \
+          $(aws sts assume-role \
+            --role-arn "$AWS_ROLE" \
+            --role-session-name $(echo "drone-${DRONE_REPO}/${DRONE_BUILD_NUMBER}" | sed "s|/|-|g") \
+            --query "Credentials.[AccessKeyId,SecretAccessKey,SessionToken]" \
+            --output text) \
+            > /root/.aws/credentials
+    - unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+    - aws sts get-caller-identity
+    volumes:
+    - name: awsconfig
+      path: /root/.aws
+
+  - name: Publish charts to staging S3
+    image: amazon/aws-cli
+    environment:
+      AWS_S3_BUCKET:
+        from_secret: HELM_CHART_STAGING_BUCKET
+      AWS_REGION: us-west-2
+    commands:
+    - cd packages
+    - aws s3 sync . s3://$AWS_S3_BUCKET/
+    volumes:
+    - name: awsconfig
+      path: /root/.aws
+
+volumes:
+  - name: awsconfig
     temp: {}
 
 ---
@@ -276,7 +438,7 @@ workspace:
 
 steps:
   - name: Build artifacts
-    image: golang:1.17.9
+    image: golang:1.20.1
     commands:
       - mkdir -p build/
       - make release/terraform
@@ -285,19 +447,47 @@ steps:
       - for FILE in *.tar.gz; do sha256sum $FILE > $FILE.sha256; done
       - ls -l .
 
-  - name: Upload to S3
-    image: plugins/s3
-    settings:
-      bucket:
-        from_secret: AWS_S3_BUCKET
-      access_key:
+  - name: Assume AWS Role
+    image: amazon/aws-cli
+    environment:
+      AWS_ACCESS_KEY_ID:
         from_secret: AWS_ACCESS_KEY_ID
-      secret_key:
+      AWS_SECRET_ACCESS_KEY:
         from_secret: AWS_SECRET_ACCESS_KEY
-      region: us-west-2
-      source: /go/src/github.com/gravitational/teleport-plugins/build/*
-      target: teleport-plugins/tag/${DRONE_TAG}
-      strip_prefix: /go/src/github.com/gravitational/teleport-plugins/build
+      AWS_ROLE:
+        from_secret: AWS_ROLE
+    commands:
+    - aws sts get-caller-identity
+    - |-
+        printf "[default]\naws_access_key_id = %s\naws_secret_access_key = %s\naws_session_token = %s" \
+          $(aws sts assume-role \
+            --role-arn "$AWS_ROLE" \
+            --role-session-name $(echo "drone-${DRONE_REPO}/${DRONE_BUILD_NUMBER}" | sed "s|/|-|g") \
+            --query "Credentials.[AccessKeyId,SecretAccessKey,SessionToken]" \
+            --output text) \
+            > /root/.aws/credentials
+    - unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+    - aws sts get-caller-identity
+    volumes:
+    - name: awsconfig
+      path: /root/.aws
+
+  - name: Upload to S3
+    image: amazon/aws-cli
+    environment:
+      AWS_S3_BUCKET:
+        from_secret: AWS_S3_BUCKET
+      AWS_REGION: us-west-2
+    commands:
+    - cd build
+    - aws s3 sync . s3://$AWS_S3_BUCKET/teleport-plugins/tag/${DRONE_TAG}/
+    volumes:
+    - name: awsconfig
+      path: /root/.aws
+
+volumes:
+  - name: awsconfig
+    temp: {}
 
 ---
 kind: pipeline
@@ -319,27 +509,77 @@ trigger:
       - refs/tags/terraform-provider-teleport-v*
 
 steps:
-  - name: Build artifacts
+  - name: Install Go Toolchain
+    environment:
+      GO_VERSION: go1.20.1
+      TOOLCHAIN_DIR: /tmp/teleport-plugins/${DRONE_BUILD_NUMBER}-${DRONE_BUILD_CREATED}-${DRONE_STAGE_NAME}/toolchains
     commands:
+      - set -u
+      - mkdir -p $TOOLCHAIN_DIR
+      - curl --silent -O https://dl.google.com/go/$GO_VERSION.darwin-amd64.tar.gz
+      - tar -C  $TOOLCHAIN_DIR -xzf $GO_VERSION.darwin-amd64.tar.gz
+      - rm -rf $GO_VERSION.darwin-amd64.tar.gz
+
+  - name: Build artifacts
+    environment:
+      TOOLCHAIN_DIR: /tmp/teleport-plugins/${DRONE_BUILD_NUMBER}-${DRONE_BUILD_CREATED}-${DRONE_STAGE_NAME}/toolchains
+      GOPATH: /tmp/teleport-plugins/${DRONE_BUILD_NUMBER}-${DRONE_BUILD_CREATED}-${DRONE_STAGE_NAME}/toolchains/go
+      GOCACHE: /tmp/teleport-plugins/${DRONE_BUILD_NUMBER}-${DRONE_BUILD_CREATED}-${DRONE_STAGE_NAME}/toolchains/go/cache
+    commands:
+      - export PATH=$TOOLCHAIN_DIR/go/bin:$PATH
       - mkdir -p build/
+      - go version
       - make release/terraform
       - find terraform/ -iname "*.tar.gz" -print -exec cp {} build/ \;
       - cd build
       - for FILE in *.tar.gz; do shasum -a 256 $FILE > $FILE.sha256; done
       - ls -l .
 
-  - name: Upload to S3
+  - name: Assume AWS Role
     environment:
-      AWS_S3_BUCKET:
-        from_secret: AWS_S3_BUCKET
       AWS_ACCESS_KEY_ID:
         from_secret: AWS_ACCESS_KEY_ID
       AWS_SECRET_ACCESS_KEY:
         from_secret: AWS_SECRET_ACCESS_KEY
-      AWS_REGION: us-west-2
+      AWS_ROLE:
+        from_secret: AWS_ROLE
+      TOOLCHAIN_DIR: /tmp/teleport-plugins/${DRONE_BUILD_NUMBER}-${DRONE_BUILD_CREATED}-${DRONE_STAGE_NAME}/toolchains
     commands:
+    - aws sts get-caller-identity
+    - export AWS_SHARED_CREDENTIALS_FILE="$TOOLCHAIN_DIR/credentials"
+    - |-
+        printf "[default]\naws_access_key_id = %s\naws_secret_access_key = %s\naws_session_token = %s" \
+          $(aws sts assume-role \
+            --role-arn "$AWS_ROLE" \
+            --role-session-name $(echo "drone-${DRONE_REPO}/${DRONE_BUILD_NUMBER}" | sed "s|/|-|g") \
+            --query "Credentials.[AccessKeyId,SecretAccessKey,SessionToken]" \
+            --output text) \
+            > "$AWS_SHARED_CREDENTIALS_FILE"
+    - unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+    - aws sts get-caller-identity
+
+  - name: Upload to S3
+    environment:
+      AWS_S3_BUCKET:
+        from_secret: AWS_S3_BUCKET
+      AWS_REGION: us-west-2
+      TOOLCHAIN_DIR: /tmp/teleport-plugins/${DRONE_BUILD_NUMBER}-${DRONE_BUILD_CREATED}-${DRONE_STAGE_NAME}/toolchains
+    commands:
+      - export AWS_SHARED_CREDENTIALS_FILE="$TOOLCHAIN_DIR/credentials"
       - cd build
       - aws s3 sync . s3://$AWS_S3_BUCKET/teleport-plugins/tag/${DRONE_TAG}/
+
+  - name: Clean up toolchains (post)
+    environment:
+      TOOLCHAIN_DIR: /tmp/teleport-plugins/${DRONE_BUILD_NUMBER}-${DRONE_BUILD_CREATED}-${DRONE_STAGE_NAME}/toolchains
+    when:
+      status:
+      - success
+      - failure
+    commands:
+      - set -u
+      - chmod -R u+rw $TOOLCHAIN_DIR
+      - rm -rf $TOOLCHAIN_DIR
 
 ---
 kind: pipeline
@@ -358,7 +598,7 @@ workspace:
 
 steps:
   - name: Build artifacts
-    image: golang:1.17.9
+    image: golang:1.20.1
     commands:
       - mkdir -p build/
       - make release/event-handler
@@ -367,19 +607,47 @@ steps:
       - for FILE in *.tar.gz; do sha256sum $FILE > $FILE.sha256; done
       - ls -l .
 
-  - name: Upload to S3
-    image: plugins/s3
-    settings:
-      bucket:
-        from_secret: AWS_S3_BUCKET
-      access_key:
+  - name: Assume AWS Role
+    image: amazon/aws-cli
+    environment:
+      AWS_ACCESS_KEY_ID:
         from_secret: AWS_ACCESS_KEY_ID
-      secret_key:
+      AWS_SECRET_ACCESS_KEY:
         from_secret: AWS_SECRET_ACCESS_KEY
-      region: us-west-2
-      source: /go/src/github.com/gravitational/teleport-plugins/build/*
-      target: teleport-plugins/tag/${DRONE_TAG}
-      strip_prefix: /go/src/github.com/gravitational/teleport-plugins/build
+      AWS_ROLE:
+        from_secret: AWS_ROLE
+    commands:
+    - aws sts get-caller-identity
+    - |-
+        printf "[default]\naws_access_key_id = %s\naws_secret_access_key = %s\naws_session_token = %s" \
+          $(aws sts assume-role \
+            --role-arn "$AWS_ROLE" \
+            --role-session-name $(echo "drone-${DRONE_REPO}/${DRONE_BUILD_NUMBER}" | sed "s|/|-|g") \
+            --query "Credentials.[AccessKeyId,SecretAccessKey,SessionToken]" \
+            --output text) \
+            > /root/.aws/credentials
+    - unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+    - aws sts get-caller-identity
+    volumes:
+    - name: awsconfig
+      path: /root/.aws
+
+  - name: Upload to S3
+    image: amazon/aws-cli
+    environment:
+      AWS_S3_BUCKET:
+        from_secret: AWS_S3_BUCKET
+      AWS_REGION: us-west-2
+    commands:
+    - cd build
+    - aws s3 sync . s3://$AWS_S3_BUCKET/teleport-plugins/tag/${DRONE_TAG}/
+    volumes:
+    - name: awsconfig
+      path: /root/.aws
+
+volumes:
+  - name: awsconfig
+    temp: {}
 
 ---
 kind: pipeline
@@ -399,21 +667,44 @@ workspace:
 steps:
   - name: fetch tags
     image: docker:git
-    commands: 
+    commands:
       - git fetch --tags
+
+  - name: Assume AWS Role
+    image: amazon/aws-cli
+    environment:
+      AWS_ACCESS_KEY_ID:
+        from_secret: PLUGIN_BUILD_USER_STAGING_KEY
+      AWS_SECRET_ACCESS_KEY:
+        from_secret: PLUGIN_BUILD_USER_STAGING_SECRET
+      AWS_ROLE:
+        from_secret: PLUGIN_BUILD_STAGING_AWS_ROLE
+    volumes:
+      - name: awsconfig
+        path: /root/.aws
+    commands:
+    - aws sts get-caller-identity
+    - |-
+        printf "[default]\naws_access_key_id = %s\naws_secret_access_key = %s\naws_session_token = %s" \
+          $(aws sts assume-role \
+            --role-arn "$AWS_ROLE" \
+            --role-session-name $(echo "drone-${DRONE_REPO}/${DRONE_BUILD_NUMBER}" | sed "s|/|-|g") \
+            --query "Credentials.[AccessKeyId,SecretAccessKey,SessionToken]" \
+            --output text) \
+            > /root/.aws/credentials
+    - unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+    - aws sts get-caller-identity
 
   - name: Build and push to ECR
     image: docker:git
     environment:
-      AWS_ACCESS_KEY_ID:
-        from_secret: PLUGIN_DRONE_ECR_KEY
-      AWS_SECRET_ACCESS_KEY:
-        from_secret: PLUGIN_DRONE_ECR_SECRET
       AWS_DEFAULT_REGION: us-west-2
       DOCKER_BUILDKIT: 1
     volumes:
       - name: dockersock
         path: /var/run
+      - name: awsconfig
+        path: /root/.aws
     commands:
       - apk add --no-cache make aws-cli
       - aws ecr get-login-password | docker login -u="AWS" --password-stdin 146628656107.dkr.ecr.us-west-2.amazonaws.com
@@ -429,6 +720,8 @@ services:
 
 volumes:
   - name: dockersock
+    temp: {}
+  - name: awsconfig
     temp: {}
 
 ---
@@ -451,8 +744,24 @@ trigger:
       - refs/tags/teleport-event-handler-v*
 
 steps:
-  - name: Build artifacts
+  - name: Install Go Toolchain
+    environment:
+      GO_VERSION: go1.20.1
+      TOOLCHAIN_DIR: /tmp/teleport-plugins/${DRONE_BUILD_NUMBER}-${DRONE_BUILD_CREATED}-${DRONE_STAGE_NAME}/toolchains
     commands:
+      - set -u
+      - mkdir -p $TOOLCHAIN_DIR
+      - curl --silent -O https://dl.google.com/go/$GO_VERSION.darwin-amd64.tar.gz
+      - tar -C  $TOOLCHAIN_DIR -xzf $GO_VERSION.darwin-amd64.tar.gz
+      - rm -rf $GO_VERSION.darwin-amd64.tar.gz
+
+  - name: Build artifacts
+    environment:
+      TOOLCHAIN_DIR: /tmp/teleport-plugins/${DRONE_BUILD_NUMBER}-${DRONE_BUILD_CREATED}-${DRONE_STAGE_NAME}/toolchains
+      GOPATH: /tmp/teleport-plugins/${DRONE_BUILD_NUMBER}-${DRONE_BUILD_CREATED}-${DRONE_STAGE_NAME}/toolchains/go
+      GOCACHE: /tmp/teleport-plugins/${DRONE_BUILD_NUMBER}-${DRONE_BUILD_CREATED}-${DRONE_STAGE_NAME}/toolchains/go/cache
+    commands:
+      - export PATH=$TOOLCHAIN_DIR/go/bin:$PATH
       - mkdir -p build/
       - make release/event-handler
       - find event-handler/ -iname "*.tar.gz" -print -exec cp {} build/ \;
@@ -460,18 +769,51 @@ steps:
       - for FILE in *.tar.gz; do shasum -a 256 $FILE > $FILE.sha256; done
       - ls -l .
 
-  - name: Upload to S3
+  - name: Assume AWS Role
     environment:
-      AWS_S3_BUCKET:
-        from_secret: AWS_S3_BUCKET
       AWS_ACCESS_KEY_ID:
         from_secret: AWS_ACCESS_KEY_ID
       AWS_SECRET_ACCESS_KEY:
         from_secret: AWS_SECRET_ACCESS_KEY
-      AWS_REGION: us-west-2
+      AWS_ROLE:
+        from_secret: AWS_ROLE
+      TOOLCHAIN_DIR: /tmp/teleport-plugins/${DRONE_BUILD_NUMBER}-${DRONE_BUILD_CREATED}-${DRONE_STAGE_NAME}/toolchains
     commands:
+    - aws sts get-caller-identity
+    - export AWS_SHARED_CREDENTIALS_FILE="$TOOLCHAIN_DIR/credentials"
+    - |-
+        printf "[default]\naws_access_key_id = %s\naws_secret_access_key = %s\naws_session_token = %s" \
+          $(aws sts assume-role \
+            --role-arn "$AWS_ROLE" \
+            --role-session-name $(echo "drone-${DRONE_REPO}/${DRONE_BUILD_NUMBER}" | sed "s|/|-|g") \
+            --query "Credentials.[AccessKeyId,SecretAccessKey,SessionToken]" \
+            --output text) \
+            > "$AWS_SHARED_CREDENTIALS_FILE"
+    - unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+    - aws sts get-caller-identity
+
+  - name: Upload to S3
+    environment:
+      AWS_S3_BUCKET:
+        from_secret: AWS_S3_BUCKET
+      AWS_REGION: us-west-2
+      TOOLCHAIN_DIR: /tmp/teleport-plugins/${DRONE_BUILD_NUMBER}-${DRONE_BUILD_CREATED}-${DRONE_STAGE_NAME}/toolchains
+    commands:
+      - export AWS_SHARED_CREDENTIALS_FILE="$TOOLCHAIN_DIR/credentials"
       - cd build
       - aws s3 sync . s3://$AWS_S3_BUCKET/teleport-plugins/tag/${DRONE_TAG}/
+
+  - name: Clean up toolchains (post)
+    environment:
+      TOOLCHAIN_DIR: /tmp/teleport-plugins/${DRONE_BUILD_NUMBER}-${DRONE_BUILD_CREATED}-${DRONE_STAGE_NAME}/toolchains
+    when:
+      status:
+      - success
+      - failure
+    commands:
+      - set -u
+      - chmod -R u+rw $TOOLCHAIN_DIR
+      - rm -rf $TOOLCHAIN_DIR
 
 ---
 kind: pipeline
@@ -491,33 +833,85 @@ clone:
   disable: true
 
 steps:
+  - name: Assume Staging AWS Role
+    image: amazon/aws-cli
+    environment:
+      AWS_ACCESS_KEY_ID:
+        from_secret: AWS_ACCESS_KEY_ID
+      AWS_SECRET_ACCESS_KEY:
+        from_secret: AWS_SECRET_ACCESS_KEY
+      AWS_ROLE:
+        from_secret: AWS_ROLE
+    volumes:
+      - name: awsconfig
+        path: /root/.aws
+    commands:
+    - aws sts get-caller-identity
+    - |-
+        printf "[default]\naws_access_key_id = %s\naws_secret_access_key = %s\naws_session_token = %s" \
+          $(aws sts assume-role \
+            --role-arn "$AWS_ROLE" \
+            --role-session-name $(echo "drone-${DRONE_REPO}/${DRONE_BUILD_NUMBER}" | sed "s|/|-|g") \
+            --query "Credentials.[AccessKeyId,SecretAccessKey,SessionToken]" \
+            --output text) \
+            > /root/.aws/credentials
+    - unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+    - aws sts get-caller-identity
+
   - name: Download artifact from S3 artifact publishing bucket
     image: amazon/aws-cli
     environment:
       AWS_S3_BUCKET:
         from_secret: AWS_S3_BUCKET
-      AWS_ACCESS_KEY_ID:
-        from_secret: AWS_ACCESS_KEY_ID
-      AWS_SECRET_ACCESS_KEY:
-        from_secret: AWS_SECRET_ACCESS_KEY
       AWS_REGION: us-west-2
+    volumes:
+      - name: awsconfig
+        path: /root/.aws
     commands:
       - aws s3 sync s3://$AWS_S3_BUCKET/teleport-plugins/tag/${DRONE_TAG}/ .
 
-  - name: Upload artifact to production S3 bucket with public read access
-    image: plugins/s3
-    settings:
-      bucket:
-        from_secret: PRODUCTION_AWS_S3_BUCKET
-      access_key:
+  - name: Assume Production AWS Role
+    image: amazon/aws-cli
+    environment:
+      AWS_ACCESS_KEY_ID:
         from_secret: PRODUCTION_AWS_ACCESS_KEY_ID
-      secret_key:
+      AWS_SECRET_ACCESS_KEY:
         from_secret: PRODUCTION_AWS_SECRET_ACCESS_KEY
-      region: us-east-1
-      acl: public-read
-      source: /go/src/github.com/gravitational/teleport-plugins/*
-      target: teleport-plugins/${DRONE_TAG##*-v}/
-      strip_prefix: /go/src/github.com/gravitational/teleport-plugins/
+      AWS_ROLE:
+        from_secret: PRODUCTION_AWS_ROLE
+    commands:
+    - rm /root/.aws/credentials
+    - aws sts get-caller-identity
+    - |-
+        printf "[default]\naws_access_key_id = %s\naws_secret_access_key = %s\naws_session_token = %s" \
+          $(aws sts assume-role \
+            --role-arn "$AWS_ROLE" \
+            --role-session-name $(echo "drone-${DRONE_REPO}/${DRONE_BUILD_NUMBER}" | sed "s|/|-|g") \
+            --query "Credentials.[AccessKeyId,SecretAccessKey,SessionToken]" \
+            --output text) \
+            > /root/.aws/credentials
+    - unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+    - aws sts get-caller-identity
+
+    volumes:
+    - name: awsconfig
+      path: /root/.aws
+
+  - name: Upload artifact to production S3 bucket with public read access
+    image: amazon/aws-cli
+    environment:
+      AWS_S3_BUCKET:
+        from_secret: PRODUCTION_AWS_S3_BUCKET
+      AWS_REGION: us-east-1
+    commands:
+      - aws s3 sync --acl public-read .  s3://$AWS_S3_BUCKET/teleport-plugins/${DRONE_TAG##*-v}/
+    volumes:
+    - name: awsconfig
+      path: /root/.aws
+
+volumes:
+  - name: awsconfig
+    temp: {}
 
 ---
 kind: pipeline
@@ -533,13 +927,40 @@ trigger:
     - publish-access-images
   ref:
     include:
+      - refs/tags/teleport-discord-v*
       - refs/tags/teleport-jira-v*
       - refs/tags/teleport-mattermost-v*
+      - refs/tags/teleport-msteams-v*
       - refs/tags/teleport-pagerduty-v*
       - refs/tags/teleport-slack-v*
       - refs/tags/teleport-email-v*
 
 steps:
+  - name: Assume AWS Role
+    image: amazon/aws-cli
+    environment:
+      AWS_ACCESS_KEY_ID:
+        from_secret: PLUGIN_BUILD_USER_STAGING_KEY
+      AWS_SECRET_ACCESS_KEY:
+        from_secret: PLUGIN_BUILD_USER_STAGING_SECRET
+      AWS_ROLE:
+        from_secret: PLUGIN_BUILD_STAGING_AWS_ROLE
+    volumes:
+      - name: awsconfig
+        path: /root/.aws
+    commands:
+    - aws sts get-caller-identity
+    - |-
+        printf "[default]\naws_access_key_id = %s\naws_secret_access_key = %s\naws_session_token = %s" \
+          $(aws sts assume-role \
+            --role-arn "$AWS_ROLE" \
+            --role-session-name $(echo "drone-${DRONE_REPO}/${DRONE_BUILD_NUMBER}" | sed "s|/|-|g") \
+            --query "Credentials.[AccessKeyId,SecretAccessKey,SessionToken]" \
+            --output text) \
+            > /root/.aws/credentials
+    - unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+    - aws sts get-caller-identity
+
   - name: Promote image
     image: docker:git
     environment:
@@ -547,19 +968,18 @@ steps:
         from_secret: PRODUCTION_QUAYIO_DOCKER_USERNAME
       QUAYIO_DOCKER_PASSWORD:
         from_secret: PRODUCTION_QUAYIO_DOCKER_PASSWORD
-      AWS_ACCESS_KEY_ID:
-        from_secret: PLUGIN_DRONE_ECR_KEY
-      AWS_SECRET_ACCESS_KEY:
-        from_secret: PLUGIN_DRONE_ECR_SECRET
       AWS_DEFAULT_REGION: us-west-2
       DOCKER_BUILDKIT: 1
     volumes:
       - name: dockersock
         path: /var/run
+      - name: awsconfig
+        path: /root/.aws
     commands:
       - apk add --no-cache make aws-cli
       - export PLUGIN_TYPE=$(echo ${DRONE_TAG} | cut -d- -f2)
       - aws ecr get-login-password | docker login -u="AWS" --password-stdin 146628656107.dkr.ecr.us-west-2.amazonaws.com
+      - aws ecr-public get-login-password --region us-east-1 | docker login -u="AWS" --password-stdin public.ecr.aws
       - docker login -u="$QUAYIO_DOCKER_USERNAME" -p="$QUAYIO_DOCKER_PASSWORD" quay.io
       - make docker-promote-access-$PLUGIN_TYPE
 
@@ -573,6 +993,8 @@ services:
 
 volumes:
   - name: dockersock
+    temp: {}
+  - name: awsconfig
     temp: {}
 
 ---
@@ -592,6 +1014,31 @@ trigger:
       - refs/tags/teleport-event-handler-v*
 
 steps:
+  - name: Assume AWS Role
+    image: amazon/aws-cli
+    environment:
+      AWS_ACCESS_KEY_ID:
+        from_secret: PLUGIN_BUILD_USER_STAGING_KEY
+      AWS_SECRET_ACCESS_KEY:
+        from_secret: PLUGIN_BUILD_USER_STAGING_SECRET
+      AWS_ROLE:
+        from_secret: PLUGIN_BUILD_STAGING_AWS_ROLE
+    volumes:
+      - name: awsconfig
+        path: /root/.aws
+    commands:
+    - aws sts get-caller-identity
+    - |-
+        printf "[default]\naws_access_key_id = %s\naws_secret_access_key = %s\naws_session_token = %s" \
+          $(aws sts assume-role \
+            --role-arn "$AWS_ROLE" \
+            --role-session-name $(echo "drone-${DRONE_REPO}/${DRONE_BUILD_NUMBER}" | sed "s|/|-|g") \
+            --query "Credentials.[AccessKeyId,SecretAccessKey,SessionToken]" \
+            --output text) \
+            > /root/.aws/credentials
+    - unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+    - aws sts get-caller-identity
+
   - name: Promote image
     image: docker:git
     environment:
@@ -599,18 +1046,17 @@ steps:
         from_secret: PRODUCTION_QUAYIO_DOCKER_USERNAME
       QUAYIO_DOCKER_PASSWORD:
         from_secret: PRODUCTION_QUAYIO_DOCKER_PASSWORD
-      AWS_ACCESS_KEY_ID:
-        from_secret: PLUGIN_DRONE_ECR_KEY
-      AWS_SECRET_ACCESS_KEY:
-        from_secret: PLUGIN_DRONE_ECR_SECRET
       AWS_DEFAULT_REGION: us-west-2
       DOCKER_BUILDKIT: 1
     volumes:
       - name: dockersock
         path: /var/run
+      - name: awsconfig
+        path: /root/.aws
     commands:
       - apk add --no-cache make aws-cli
       - aws ecr get-login-password | docker login -u="AWS" --password-stdin 146628656107.dkr.ecr.us-west-2.amazonaws.com
+      - aws ecr-public get-login-password --region us-east-1 | docker login -u="AWS" --password-stdin public.ecr.aws
       - docker login -u="$QUAYIO_DOCKER_USERNAME" -p="$QUAYIO_DOCKER_PASSWORD" quay.io
       - make docker-promote-event-handler
 
@@ -625,9 +1071,321 @@ services:
 volumes:
   - name: dockersock
     temp: {}
+  - name: awsconfig
+    temp: {}
 
 ---
+kind: pipeline
+type: kubernetes
+name: publish-helm-charts
+
+trigger:
+  event:
+    - promote
+  target:
+    - production
+    - publish-helm-charts
+
+steps:
+  - name: Assume Production AWS Role
+    image: amazon/aws-cli
+    environment:
+      AWS_ACCESS_KEY_ID:
+        from_secret: HELM_CHART_PRODUCTION_BUCKET_KEY
+      AWS_SECRET_ACCESS_KEY:
+        from_secret: HELM_CHART_PRODUCTION_BUCKET_SECRET
+      AWS_ROLE:
+        from_secret: HELM_CHART_PRODUCTION_AWS_ROLE
+    volumes:
+      - name: awsconfig
+        path: /root/.aws
+    commands:
+    - aws sts get-caller-identity
+    - |-
+        printf "[default]\naws_access_key_id = %s\naws_secret_access_key = %s\naws_session_token = %s" \
+          $(aws sts assume-role \
+            --role-arn "$AWS_ROLE" \
+            --role-session-name $(echo "drone-${DRONE_REPO}/${DRONE_BUILD_NUMBER}" | sed "s|/|-|g") \
+            --query "Credentials.[AccessKeyId,SecretAccessKey,SessionToken]" \
+            --output text) \
+            > /root/.aws/credentials
+    - unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+    - aws sts get-caller-identity
+
+  - name: Download production chart repositories
+    image: amazon/aws-cli
+    environment:
+      AWS_S3_BUCKET:
+        from_secret: HELM_CHART_PRODUCTION_BUCKET
+    volumes:
+      - name: awsconfig
+        path: /root/.aws
+    commands:
+      - mkdir -p packages
+      - aws s3 sync s3://$AWS_S3_BUCKET/ packages/
+
+  - name: Assume Staging AWS Role
+    image: amazon/aws-cli
+    environment:
+      AWS_ACCESS_KEY_ID:
+        from_secret: PLUGIN_BUILD_USER_STAGING_KEY
+      AWS_SECRET_ACCESS_KEY:
+        from_secret: PLUGIN_BUILD_USER_STAGING_SECRET
+      AWS_ROLE:
+        from_secret: PLUGIN_BUILD_STAGING_AWS_ROLE
+    volumes:
+      - name: awsconfig
+        path: /root/.aws
+    commands:
+    - rm /root/.aws/credentials
+    - aws sts get-caller-identity
+    - |-
+        printf "[default]\naws_access_key_id = %s\naws_secret_access_key = %s\naws_session_token = %s" \
+          $(aws sts assume-role \
+            --role-arn "$AWS_ROLE" \
+            --role-session-name $(echo "drone-${DRONE_REPO}/${DRONE_BUILD_NUMBER}" | sed "s|/|-|g") \
+            --query "Credentials.[AccessKeyId,SecretAccessKey,SessionToken]" \
+            --output text) \
+            > /root/.aws/credentials
+    - unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+    - aws sts get-caller-identity
+
+  - name: Download staging chart repositories
+    image: amazon/aws-cli
+    environment:
+      AWS_S3_BUCKET:
+        from_secret: HELM_CHART_STAGING_BUCKET
+    volumes:
+      - name: awsconfig
+        path: /root/.aws
+    commands:
+      - aws s3 sync s3://$AWS_S3_BUCKET/ packages/
+
+  - name: Generate index file
+    image: alpine/helm:latest
+    commands:
+      - helm repo index packages/
+
+  - name: Reassume Production AWS Role
+    image: amazon/aws-cli
+    environment:
+      AWS_ACCESS_KEY_ID:
+        from_secret: HELM_CHART_PRODUCTION_BUCKET_KEY
+      AWS_SECRET_ACCESS_KEY:
+        from_secret: HELM_CHART_PRODUCTION_BUCKET_SECRET
+      AWS_ROLE:
+        from_secret: HELM_CHART_PRODUCTION_AWS_ROLE
+    volumes:
+      - name: awsconfig
+        path: /root/.aws
+    commands:
+    - rm /root/.aws/credentials
+    - aws sts get-caller-identity
+    - |-
+        printf "[default]\naws_access_key_id = %s\naws_secret_access_key = %s\naws_session_token = %s" \
+          $(aws sts assume-role \
+            --role-arn "$AWS_ROLE" \
+            --role-session-name $(echo "drone-${DRONE_REPO}/${DRONE_BUILD_NUMBER}" | sed "s|/|-|g") \
+            --query "Credentials.[AccessKeyId,SecretAccessKey,SessionToken]" \
+            --output text) \
+            > /root/.aws/credentials
+    - unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+    - aws sts get-caller-identity
+
+  - name: Publish chart repository to S3
+    image: amazon/aws-cli
+    environment:
+      AWS_S3_BUCKET:
+        from_secret: HELM_CHART_PRODUCTION_BUCKET
+      REGION: us-east-2
+    volumes:
+      - name: awsconfig
+        path: /root/.aws
+    commands:
+      - cd packages
+      - aws s3 sync . s3://$AWS_S3_BUCKET/
+
+volumes:
+  - name: awsconfig
+    temp: {}
+
+---
+# NOTE: Any changes here need to be reflected in the emergency deployment
+#       scripts in tooling/bin
+kind: pipeline
+type: kubernetes
+name: tag-stage-terraform-provider
+
+trigger:
+  event:
+    - tag
+  ref:
+    include:
+      - refs/tags/terraform-provider-teleport-v*
+
+depends_on:
+  - tag-build-terraform-linux
+  - tag-build-terraform-darwin
+
+concurrency:
+  limit: 1
+
+steps:
+  - name: Upload terraform provider to staging registry
+    image: golang:1.20.1
+    commands:
+      - cd tooling
+      - |
+        go run ./cmd/promote-terraform                                         \
+          --tag ${DRONE_TAG}                                                   \
+          -p 6                                                                 \
+          --registry-url https://terraform-staging.releases.teleport.dev/      \
+          --namespace gravitational                                            \
+          --name teleport                                                      \
+          --deployment-role $DEPLOYMENT_ROLE                                   \
+          --staging-role $STAGING_ROLE
+
+    environment:
+      STAGING_REGION: us-west-2
+      STAGING_BUCKET:
+        from_secret: AWS_S3_BUCKET
+      STAGING_ACCESS_KEY_ID:
+        from_secret: AWS_ACCESS_KEY_ID
+      STAGING_SECRET_ACCESS_KEY:
+        from_secret: AWS_SECRET_ACCESS_KEY
+      STAGING_ROLE:
+        from_secret: AWS_ROLE
+
+      PROD_REGION:
+        from_secret: STAGING_TERRAFORM_AWS_REGION
+      PROD_BUCKET:
+        from_secret: STAGING_TERRAFORM_AWS_BUCKET
+      PROD_ACCESS_KEY_ID:
+        from_secret: STAGING_TERRAFORM_AWS_ACCESS_KEY_ID
+      PROD_SECRET_ACCESS_KEY:
+        from_secret: STAGING_TERRAFORM_AWS_SECRET_ACCESS_KEY
+      DEPLOYMENT_ROLE:
+        from_secret: STAGING_TERRAFORM_AWS_DEPLOYMENT_ROLE
+      SIGNING_KEY:
+        from_secret: STAGING_TERRAFORM_REGISTRY_SIGNING_KEY
+---
+# NOTE: Any changes here need to be reflected in the emergency deployment
+#       scripts in tooling/bin
+kind: pipeline
+type: kubernetes
+name: promote-staging-terraform-provider
+
+trigger:
+  event:
+  - promote
+  target:
+  - staging
+  - staging-terraform
+  ref:
+    include:
+      - refs/tags/terraform-provider-teleport-v*
+
+concurrency:
+  limit: 1
+
+steps:
+  - name: Upload terraform provider to staging registry
+    image: golang:1.20.1
+    commands:
+      - cd tooling
+      - |
+        go run ./cmd/promote-terraform                                         \
+          --tag ${DRONE_TAG}                                                   \
+          -p 6                                                                 \
+          --registry-url https://terraform-staging.releases.teleport.dev/      \
+          --namespace gravitational                                            \
+          --name teleport                                                      \
+          --deployment-role $DEPLOYMENT_ROLE                                   \
+          --staging-role $STAGING_ROLE
+
+    environment:
+      STAGING_REGION: us-west-2
+      STAGING_BUCKET:
+        from_secret: AWS_S3_BUCKET
+      STAGING_ACCESS_KEY_ID:
+        from_secret: AWS_ACCESS_KEY_ID
+      STAGING_SECRET_ACCESS_KEY:
+        from_secret: AWS_SECRET_ACCESS_KEY
+      STAGING_ROLE:
+        from_secret: AWS_ROLE
+
+      PROD_REGION:
+        from_secret: STAGING_TERRAFORM_AWS_REGION
+      PROD_BUCKET:
+        from_secret: STAGING_TERRAFORM_AWS_BUCKET
+      PROD_ACCESS_KEY_ID:
+        from_secret: STAGING_TERRAFORM_AWS_ACCESS_KEY_ID
+      PROD_SECRET_ACCESS_KEY:
+        from_secret: STAGING_TERRAFORM_AWS_SECRET_ACCESS_KEY
+      DEPLOYMENT_ROLE:
+        from_secret: STAGING_TERRAFORM_AWS_DEPLOYMENT_ROLE
+      SIGNING_KEY:
+        from_secret: STAGING_TERRAFORM_REGISTRY_SIGNING_KEY
+---
+# NOTE: Any changes here need to be reflected in the emergency deployment
+#       scripts in tooling/bin
+kind: pipeline
+type: kubernetes
+name: promote-terraform-provider
+
+trigger:
+  event:
+  - promote
+  target:
+  - production
+  - production-terraform
+  ref:
+    include:
+      - refs/tags/terraform-provider-teleport-v*
+
+concurrency:
+  limit: 1
+
+steps:
+  - name: Promote terraform provider to public registry
+    image: golang:1.20.1
+    commands:
+      - cd tooling
+      - |
+        go run ./cmd/promote-terraform                                 \
+          --tag ${DRONE_TAG}                                           \
+          -p 6                                                         \
+          --registry-url https://terraform.releases.teleport.dev/      \
+          --namespace gravitational                                    \
+          --name teleport                                              \
+          --deployment-role $DEPLOYMENT_ROLE                           \
+          --staging-role $STAGING_ROLE
+
+    environment:
+      STAGING_REGION: us-west-2
+      STAGING_BUCKET:
+        from_secret: AWS_S3_BUCKET
+      STAGING_ACCESS_KEY_ID:
+        from_secret: AWS_ACCESS_KEY_ID
+      STAGING_SECRET_ACCESS_KEY:
+        from_secret: AWS_SECRET_ACCESS_KEY
+      STAGING_ROLE:
+        from_secret: AWS_ROLE
+
+      PROD_REGION:
+        from_secret: PRODUCTION_TERRAFORM_AWS_REGION
+      PROD_BUCKET:
+        from_secret: PRODUCTION_TERRAFORM_AWS_BUCKET
+      PROD_ACCESS_KEY_ID:
+        from_secret: PRODUCTION_TERRAFORM_AWS_ACCESS_KEY_ID
+      PROD_SECRET_ACCESS_KEY:
+        from_secret: PRODUCTION_TERRAFORM_AWS_SECRET_ACCESS_KEY
+      DEPLOYMENT_ROLE:
+        from_secret: PRODUCTION_TERRAFORM_AWS_DEPLOYMENT_ROLE
+      SIGNING_KEY:
+        from_secret: PRODUCTION_TERRAFORM_REGISTRY_SIGNING_KEY
+---
 kind: signature
-hmac: 5cfe82e8c35ed3e6fbfbada4e08648e4ca3ea2af9e950ab0d2f98c6a30f00414
+hmac: 2d718424bd5df29e7efb43028f439ffe6a7b3fb05139648d8c26864c9bf06c8d
 
 ...

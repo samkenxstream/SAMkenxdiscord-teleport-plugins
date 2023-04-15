@@ -17,22 +17,24 @@ limitations under the License.
 package integration
 
 import (
+	"context"
+	"testing"
 	"time"
 
-	"github.com/gravitational/teleport-plugins/lib/logger"
-	"github.com/gravitational/teleport-plugins/lib/testing"
-
 	"github.com/stretchr/testify/require"
+
+	"github.com/gravitational/teleport-plugins/lib/logger"
 )
 
 type BaseSetup struct {
-	testing.Suite
+	Suite
 	Integration *Integration
 }
 
 type AuthSetup struct {
 	BaseSetup
-	Auth *AuthService
+	Auth         *AuthService
+	CacheEnabled bool
 }
 
 type ProxySetup struct {
@@ -45,9 +47,10 @@ type SSHSetup struct {
 	SSH *SSHService
 }
 
-func (s *BaseSetup) SetupSuite() {
+func (s *BaseSetup) SetupSuite(t *testing.T) {
 	logger.Init()
-	logger.Setup(logger.Config{Severity: "debug"})
+	err := logger.Setup(logger.Config{Severity: "debug"})
+	require.NoError(t, err)
 }
 
 func (s *BaseSetup) SetupService() {
@@ -63,25 +66,30 @@ func (s *BaseSetup) SetupService() {
 	s.Integration = integration
 }
 
-func (s *AuthSetup) SetupSuite() {
-	s.BaseSetup.SetupSuite()
+func (s *AuthSetup) SetupSuite(t *testing.T) {
+	s.CacheEnabled = false
+	s.BaseSetup.SetupSuite(t)
 }
 
-func (s *AuthSetup) SetupService() {
+func (s *AuthSetup) SetupService(authServiceOptions ...AuthServiceOption) {
 	s.BaseSetup.SetupService()
 	t := s.T()
-	auth, err := s.Integration.NewAuthService()
+	auth, err := s.Integration.NewAuthService(authServiceOptions...)
 	require.NoError(t, err)
 	s.StartApp(auth)
 	s.Auth = auth
+
+	ready, err := s.Auth.WaitReady(s.Context())
+	require.NoError(t, err)
+	require.True(t, ready, "auth is not ready")
 
 	// Set CA Pin so that Proxy and SSH can register to auth securely.
 	err = s.Integration.SetCAPin(s.Context(), s.Auth)
 	require.NoError(t, err)
 }
 
-func (s *ProxySetup) SetupSuite() {
-	s.AuthSetup.SetupSuite()
+func (s *ProxySetup) SetupSuite(t *testing.T) {
+	s.AuthSetup.SetupSuite(t)
 }
 
 func (s *ProxySetup) SetupService() {
@@ -91,10 +99,13 @@ func (s *ProxySetup) SetupService() {
 	require.NoError(t, err)
 	s.StartApp(proxy)
 	s.Proxy = proxy
+	ready, err := s.Proxy.WaitReady(s.Context())
+	require.NoError(t, err)
+	require.True(t, ready, "proxy is not ready")
 }
 
-func (s *SSHSetup) SetupSuite() {
-	s.ProxySetup.SetupSuite()
+func (s *SSHSetup) SetupSuite(t *testing.T) {
+	s.ProxySetup.SetupSuite(t)
 }
 
 func (s *SSHSetup) SetupService() {
@@ -104,4 +115,15 @@ func (s *SSHSetup) SetupService() {
 	require.NoError(t, err)
 	s.StartApp(ssh)
 	s.SSH = ssh
+	ready, err := s.SSH.WaitReady(context.Background())
+	require.NoError(t, err)
+	require.True(t, ready, "ssh is not ready")
+
+	// Wait for node to show up on the server.
+	require.Eventually(t, func() bool {
+		resources, err := s.Integration.tctl(s.Auth).GetAll(s.Context(), "nodes")
+		require.NoError(t, err)
+
+		return len(resources) != 0
+	}, 5*time.Second, time.Second)
 }

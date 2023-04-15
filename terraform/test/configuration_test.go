@@ -19,13 +19,14 @@ package test
 import (
 	"encoding/base64"
 	"os"
+	"regexp"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/stretchr/testify/require"
 )
 
 func (s *TerraformSuite) TestConfigureAuthBase64() {
-	name := "teleport_app.test"
+	name := "teleport_app.test_auth_b64"
 
 	key, err := os.ReadFile(s.teleportConfig.ClientKey)
 	require.NoError(s.T(), err)
@@ -52,7 +53,7 @@ provider "teleport" {
 		ProtoV6ProviderFactories: s.terraformProviders,
 		Steps: []resource.TestStep{
 			{
-				Config: s.getFixtureWithCustomConfig("app_0_create.tf", providerConfigUsingB64Auth),
+				Config: s.getFixtureWithCustomConfig("app_0_create_auth_b64.tf", providerConfigUsingB64Auth),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr(name, "kind", "app"),
 					resource.TestCheckResourceAttr(name, "spec.uri", "localhost:3000"),
@@ -63,7 +64,7 @@ provider "teleport" {
 }
 
 func (s *TerraformSuite) TestConfigureAuthFiles() {
-	name := "teleport_app.test"
+	name := "teleport_app.test_auth_files"
 
 	providerConfigUsingAuthFiles := `
 provider "teleport" {
@@ -78,11 +79,85 @@ provider "teleport" {
 		ProtoV6ProviderFactories: s.terraformProviders,
 		Steps: []resource.TestStep{
 			{
+				Config: s.getFixtureWithCustomConfig("app_0_create_auth_files.tf", providerConfigUsingAuthFiles),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr(name, "kind", "app"),
+					resource.TestCheckResourceAttr(name, "spec.uri", "localhost:3000"),
+				),
+			},
+		},
+	})
+}
+
+func (s *TerraformSuite) TestConfigureIdentityFilePath() {
+	name := "teleport_app.test"
+
+	providerConfigUsingAuthFiles := `
+provider "teleport" {
+	addr = "` + s.teleportConfig.Addr + `"
+	identity_file_path = "` + s.teleportConfig.Identity + `"
+}
+	`
+
+	resource.Test(s.T(), resource.TestCase{
+		ProtoV6ProviderFactories: s.terraformProviders,
+		Steps: []resource.TestStep{
+			{
 				Config: s.getFixtureWithCustomConfig("app_0_create.tf", providerConfigUsingAuthFiles),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr(name, "kind", "app"),
 					resource.TestCheckResourceAttr(name, "spec.uri", "localhost:3000"),
 				),
+			},
+		},
+	})
+}
+
+func (s *TerraformSuite) TestConfigureIdentityFileBase64() {
+	name := "teleport_app.test"
+
+	identity, err := os.ReadFile(s.teleportConfig.Identity)
+	require.NoError(s.T(), err)
+	identityAsB64 := base64.StdEncoding.EncodeToString(identity)
+
+	providerConfigUsingAuthFiles := `
+provider "teleport" {
+	addr = "` + s.teleportConfig.Addr + `"
+	identity_file_base64 = "` + identityAsB64 + `"
+}
+	`
+
+	resource.Test(s.T(), resource.TestCase{
+		ProtoV6ProviderFactories: s.terraformProviders,
+		Steps: []resource.TestStep{
+			{
+				Config: s.getFixtureWithCustomConfig("app_0_create.tf", providerConfigUsingAuthFiles),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr(name, "kind", "app"),
+					resource.TestCheckResourceAttr(name, "spec.uri", "localhost:3000"),
+				),
+			},
+		},
+	})
+}
+
+func (s *TerraformSuite) TestConfigureIdentityFileBase64_InvalidBase64() {
+	identityAsB64 := base64.StdEncoding.EncodeToString([]byte("invalid"))
+
+	providerConfigUsingAuthFiles := `
+provider "teleport" {
+	addr = "` + s.teleportConfig.Addr + `"
+	identity_file_base64 = "` + identityAsB64 + `"
+	dial_timeout_duration = "1s"
+}
+	`
+
+	resource.Test(s.T(), resource.TestCase{
+		ProtoV6ProviderFactories: s.terraformProviders,
+		Steps: []resource.TestStep{
+			{
+				Config:      s.getFixtureWithCustomConfig("app_0_create.tf", providerConfigUsingAuthFiles),
+				ExpectError: regexp.MustCompile("identity file could not be decoded"),
 			},
 		},
 	})

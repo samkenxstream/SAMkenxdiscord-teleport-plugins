@@ -1,4 +1,20 @@
-package main
+/*
+Copyright 2022 Gravitational, Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package slack
 
 import (
 	"encoding/json"
@@ -8,32 +24,31 @@ import (
 
 // Slack API types
 
-type Response struct {
+type APIResponse struct {
 	Ok    bool   `json:"ok"`
 	Error string `json:"error,omitempty"`
 }
 
 type ChatMsgResponse struct {
-	Response
+	APIResponse
 	Channel   string `json:"channel"`
 	Timestamp string `json:"ts"`
 	Text      string `json:"text"`
 }
 
-type Msg struct {
-	Type       string      `json:"type,omitempty"`
-	Channel    string      `json:"channel,omitempty"`
-	User       string      `json:"user,omitempty"`
-	Username   string      `json:"username,omitempty"`
-	Timestamp  string      `json:"ts,omitempty"`
-	Text       string      `json:"text,omitempty"`
-	ThreadTs   string      `json:"thread_ts,omitempty"`
-	BlockItems []BlockItem `json:"blocks,omitempty"`
+type BaseMessage struct {
+	Type      string `json:"type,omitempty"`
+	Channel   string `json:"channel,omitempty"`
+	User      string `json:"user,omitempty"`
+	Username  string `json:"username,omitempty"`
+	Timestamp string `json:"ts,omitempty"`
+	ThreadTs  string `json:"thread_ts,omitempty"`
 }
 
-type RespondMsg struct {
-	Msg
-	ReplaceOriginal bool `json:"replace_original,omitempty"`
+type Message struct {
+	BaseMessage
+	BlockItems []BlockItem `json:"blocks,omitempty"`
+	Text       string      `json:"text,omitempty"`
 }
 
 type User struct {
@@ -44,6 +59,15 @@ type User struct {
 
 type UserProfile struct {
 	Email string `json:"email"`
+}
+
+// Slack API: OAuth
+
+type AccessResponse struct {
+	APIResponse
+	AccessToken      string `json:"access_token"`
+	RefreshToken     string `json:"refresh_token"`
+	ExpiresInSeconds int    `json:"expires_in"`
 }
 
 // Slack API: blocks

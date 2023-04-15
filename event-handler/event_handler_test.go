@@ -17,19 +17,22 @@ limitations under the License.
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"os/user"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/gravitational/teleport/api/types"
+	"github.com/gravitational/teleport/api/utils"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
 
 	"github.com/gravitational/teleport-plugins/lib"
 	"github.com/gravitational/teleport-plugins/lib/logger"
 	"github.com/gravitational/teleport-plugins/lib/testing/integration"
-	"github.com/gravitational/teleport/api/types"
-
-	"github.com/stretchr/testify/require"
-	"github.com/stretchr/testify/suite"
 )
 
 type EventHandlerSuite struct {
@@ -57,7 +60,7 @@ func (s *EventHandlerSuite) SetupSuite() {
 	var err error
 	t := s.T()
 
-	s.SSHSetup.SetupSuite()
+	s.SSHSetup.SetupSuite(t)
 	s.SSHSetup.SetupService()
 
 	me, err := user.Current()
@@ -76,8 +79,9 @@ func (s *EventHandlerSuite) SetupSuite() {
 
 	// Set up plugin user.
 
-	role, err := bootstrap.AddRole("access-event-handler", types.RoleSpecV5{
+	role, err := bootstrap.AddRole("access-event-handler", types.RoleSpecV6{
 		Allow: types.RoleConditions{
+			NodeLabels: types.Labels{types.Wildcard: utils.Strings{types.Wildcard}},
 			Rules: []types.Rule{
 				types.NewRule("event", []string{"list", "read"}),
 				types.NewRule("session", []string{"list", "read"}),
@@ -106,12 +110,18 @@ func (s *EventHandlerSuite) SetupSuite() {
 	s.teleportConfig.Identity = identityPath
 
 	s.SetContextTimeout(5 * time.Minute)
+
+	// Wait for service to show up
+	require.Eventually(t, func() bool {
+		return s.SSH.IsReady()
+	}, 5*time.Second, time.Second)
 }
 
 func (s *EventHandlerSuite) SetupTest() {
 	t := s.T()
 
-	logger.Setup(logger.Config{Severity: "debug"})
+	err := logger.Setup(logger.Config{Severity: "debug"})
+	require.NoError(t, err)
 
 	fd, err := NewFakeFluentd()
 	require.NoError(t, err)
@@ -162,18 +172,36 @@ func (s *EventHandlerSuite) TestEvents() {
 
 	s.startApp()
 
-	err := s.ruler().CreateUser(s.Context(), &types.UserV2{
-		Metadata: types.Metadata{
-			Name: "fake-ruler",
-		},
-		Spec: types.UserSpecV2{
-			Roles: []string{"access-event-handler"},
-		},
-	})
-	require.NoError(t, err)
+	// We expect 4 events of `intance.join`.
+	// There's no order guarantee, so we must collect all of them and assert at the end.
+	// 4 events:
+	//  There's a Proxy and a Node instance: each emits 2 events.
+	joinInstanceCount := 0
+	joinProxyCount := 0
+	joinNodeCount := 0
+
+	for i := 0; i < 4; i++ {
+		evt, err := s.fakeFluentd.GetMessage(s.Context())
+		require.NoError(t, err)
+
+		require.Contains(t, evt, `"event":"instance.join"`)
+
+		if strings.Contains(evt, `"role":"Proxy"`) {
+			joinProxyCount = joinProxyCount + 1
+		}
+		if strings.Contains(evt, `"role":"Node"`) {
+			joinNodeCount = joinNodeCount + 1
+		}
+		if strings.Contains(evt, `"role":"Instance"`) {
+			joinInstanceCount = joinInstanceCount + 1
+		}
+	}
+
+	require.Equal(t, joinProxyCount, 1, `expected two "role":"Proxy", got %d`, joinProxyCount)
+	require.Equal(t, joinNodeCount, 1, `expected two "role":"Node", got %d`, joinNodeCount)
+	require.Equal(t, joinInstanceCount, 2, `expected two "role":"Instance", got %d`, joinInstanceCount)
 
 	// Test bootstrap events
-
 	evt, err := s.fakeFluentd.GetMessage(s.Context())
 	require.NoError(t, err)
 	require.Contains(t, evt, `"event":"role.created"`)
@@ -208,6 +236,16 @@ func (s *EventHandlerSuite) TestEvents() {
 	require.Contains(t, evt, `"user":"`+s.userNames.plugin+`"`)
 	require.Contains(t, evt, `"roles":["access-event-handler"]`)
 
+	err = s.ruler().CreateUser(s.Context(), &types.UserV2{
+		Metadata: types.Metadata{
+			Name: "fake-ruler",
+		},
+		Spec: types.UserSpecV2{
+			Roles: []string{"access-event-handler"},
+		},
+	})
+	require.NoError(t, err)
+
 	evt, err = s.fakeFluentd.GetMessage(s.Context())
 	require.NoError(t, err)
 	require.Contains(t, evt, `"event":"user.create"`)
@@ -215,22 +253,30 @@ func (s *EventHandlerSuite) TestEvents() {
 	require.Contains(t, evt, `"roles":["access-event-handler"]`)
 
 	// Test session ingestion
-	tshCmd := s.Integration.NewTsh(s.Proxy.WebAndSSHProxyAddr(), s.teleportConfig.Identity)
+	tshCmd := s.Integration.NewTsh(s.Proxy.WebProxyAddr().String(), s.teleportConfig.Identity)
 	cmd := tshCmd.SSHCommand(s.Context(), s.me.Username+"@localhost")
 
 	stdinPipe, err := cmd.StdinPipe()
 	require.NoError(t, err)
 
+	cmdStdout := &bytes.Buffer{}
+	cmdStderr := &bytes.Buffer{}
+
+	cmd.Stdout = cmdStdout
+	cmd.Stderr = cmdStderr
+
 	err = cmd.Start()
 	require.NoError(t, err)
 
-	_, err = stdinPipe.Write([]byte("exit\n"))
+	_, err = stdinPipe.Write([]byte("whoami\n\r"))
+	require.NoError(t, err)
+
+	_, err = stdinPipe.Write([]byte("exit\n\r"))
 	require.NoError(t, err)
 
 	err = cmd.Wait()
-	require.NoError(t, err)
-
-	err = stdinPipe.Close()
+	t.Log("STDOUT", cmdStdout.String())
+	t.Log("STDERR", cmdStderr.String())
 	require.NoError(t, err)
 
 	// Our test session is very simple. There would be to copies of the same messages: one copy is supposed to be received

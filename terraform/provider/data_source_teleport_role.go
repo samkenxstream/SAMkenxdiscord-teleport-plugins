@@ -23,7 +23,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/hashicorp/terraform-plugin-go/tftypes"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 
 	"github.com/gravitational/teleport-plugins/terraform/tfschema"
 	apitypes "github.com/gravitational/teleport/api/types"
@@ -40,7 +40,7 @@ type dataSourceTeleportRole struct {
 
 // GetSchema returns the data source schema
 func (r dataSourceTeleportRoleType) GetSchema(ctx context.Context) (tfsdk.Schema, diag.Diagnostics) {
-	return tfschema.GenSchemaRoleV5(ctx)
+	return tfschema.GenSchemaRoleV6(ctx)
 }
 
 // NewDataSource creates the empty data source
@@ -53,7 +53,7 @@ func (r dataSourceTeleportRoleType) NewDataSource(_ context.Context, p tfsdk.Pro
 // Read reads teleport Role
 func (r dataSourceTeleportRole) Read(ctx context.Context, req tfsdk.ReadDataSourceRequest, resp *tfsdk.ReadDataSourceResponse) {
 	var id types.String
-	diags := req.Config.GetAttribute(ctx, tftypes.NewAttributePath().WithAttributeName("metadata").WithAttributeName("name"), &id)
+	diags := req.Config.GetAttribute(ctx, path.Root("metadata").AtName("name"), &id)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -66,8 +66,8 @@ func (r dataSourceTeleportRole) Read(ctx context.Context, req tfsdk.ReadDataSour
 	}
 
     var state types.Object
-	role := roleI.(*apitypes.RoleV5)
-	diags = tfschema.CopyRoleV5ToTerraform(ctx, *role, &state)
+	role := roleI.(*apitypes.RoleV6)
+	diags = tfschema.CopyRoleV6ToTerraform(ctx, *role, &state)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return

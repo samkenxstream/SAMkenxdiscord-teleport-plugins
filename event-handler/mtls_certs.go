@@ -22,8 +22,8 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
-	"io/ioutil"
 	"net"
+	"os"
 	"time"
 
 	"github.com/gravitational/trace"
@@ -65,12 +65,14 @@ func GenerateMTLSCerts(cn string, dnsNames []string, ips []string, ttl time.Dura
 
 	c := &MTLSCerts{
 		caCert: x509.Certificate{ // caCert is a fluentd CA certificate
+			Subject:               entity,
 			NotBefore:             notBefore,
 			NotAfter:              notAfter,
 			IsCA:                  true,
 			MaxPathLenZero:        true,
 			KeyUsage:              x509.KeyUsageCRLSign | x509.KeyUsageCertSign,
 			BasicConstraintsValid: true,
+			Issuer:                entity,
 		},
 		clientCert: x509.Certificate{ // clientCert is a fluentd client certificate
 			Subject:     entity,
@@ -78,6 +80,7 @@ func GenerateMTLSCerts(cn string, dnsNames []string, ips []string, ttl time.Dura
 			NotAfter:    notAfter,
 			ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 			KeyUsage:    x509.KeyUsageDigitalSignature,
+			Issuer:      entity,
 		},
 		serverCert: x509.Certificate{ // Server CSR
 			Subject:     entity,
@@ -85,6 +88,7 @@ func GenerateMTLSCerts(cn string, dnsNames []string, ips []string, ttl time.Dura
 			NotAfter:    notAfter,
 			KeyUsage:    x509.KeyUsageDigitalSignature,
 			ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+			Issuer:      entity,
 		},
 	}
 
@@ -111,7 +115,9 @@ func GenerateMTLSCerts(cn string, dnsNames []string, ips []string, ttl time.Dura
 	c.serverCert.SerialNumber = sn
 
 	// Append SANs and IPs
-	c.appendSANs(&c.serverCert, dnsNames, ips)
+	if err := c.appendSANs(&c.serverCert, dnsNames, ips); err != nil {
+		return nil, trace.Wrap(err)
+	}
 
 	// Run the generator
 	err = c.generate(length)
@@ -207,7 +213,7 @@ func (c *keyPair) EncodeToMemory(pwd string) ([]byte, []byte, error) {
 
 	// Encrypt with passphrase
 	if pwd != "" {
-		//nolint // deprecated, but we still need it to be encrypted because of fluentd requirements
+		//nolint:staticcheck // deprecated, but we still need it to be encrypted because of fluentd requirements
 		pkBlock, err = x509.EncryptPEMBlock(rand.Reader, pkBlock.Type, pkBlock.Bytes, []byte(pwd), x509.PEMCipherAES256)
 		if err != nil {
 			return nil, nil, trace.Wrap(err)
@@ -226,12 +232,12 @@ func (c *keyPair) WriteFile(certPath, keyPath, pwd string) error {
 		return trace.Wrap(err)
 	}
 
-	err = ioutil.WriteFile(certPath, bytesPEM, perms)
+	err = os.WriteFile(certPath, bytesPEM, perms)
 	if err != nil {
 		return trace.Wrap(err)
 	}
 
-	err = ioutil.WriteFile(keyPath, pkBytesPEM, perms)
+	err = os.WriteFile(keyPath, pkBytesPEM, perms)
 	if err != nil {
 		return trace.Wrap(err)
 	}

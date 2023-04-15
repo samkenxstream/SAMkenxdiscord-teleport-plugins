@@ -1,0 +1,32 @@
+name: Plugins Tests (Go)
+run-name: Plugins Tests (Go) - ${{ github.run_id }} - @${{ github.actor }}
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+env:
+  TELEPORT_GET_VERSION: v12.1.0
+  TELEPORT_ENTERPRISE_LICENSE: ${{ secrets.TELEPORT_ENTERPRISE_LICENSE }}
+
+jobs:
+  test:
+    name: Plugins Tests (Go)
+    runs-on: ubuntu-22.04-16core
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout Teleport Plugins
+        uses: actions/checkout@v3
+
+      - name: Setup Go 1.20.1
+        uses: actions/setup-go@v3
+        with:
+          go-version: '1.20.1'
+
+      - name: Run tests
+        run: make test

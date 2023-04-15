@@ -1,3 +1,17 @@
+// Copyright 2023 Gravitational, Inc
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package lib
 
 import (
@@ -49,7 +63,7 @@ type HTTPBasicAuthConfig struct {
 // HTTP is a tiny wrapper around standard net/http.
 // It starts either insecure server or secure one with TLS, depending on the settings.
 // It also adds a context to its handlers and the server itself has context to.
-// So you are guaranteed that server will be closed when the context is cancelled.
+// So you are guaranteed that server will be closed when the context is canceled.
 type HTTP struct {
 	HTTPConfig
 	mu      sync.Mutex

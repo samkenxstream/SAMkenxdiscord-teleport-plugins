@@ -1,3 +1,17 @@
+// Copyright 2023 Gravitational, Inc
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package main
 
 import (
@@ -13,18 +27,16 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/gravitational/teleport-plugins/lib"
-	"github.com/gravitational/teleport-plugins/lib/logger"
-	. "github.com/gravitational/teleport-plugins/lib/testing"
-	"github.com/gravitational/teleport-plugins/lib/testing/integration"
 	"github.com/gravitational/teleport/api/client/proto"
 	"github.com/gravitational/teleport/api/types"
 	"github.com/gravitational/trace"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/gravitational/teleport-plugins/lib"
+	"github.com/gravitational/teleport-plugins/lib/logger"
+	"github.com/gravitational/teleport-plugins/lib/testing/integration"
 )
 
 var msgFieldRegexp = regexp.MustCompile(`(?im)^\*\*([a-zA-Z ]+)\*\*:\ +(.+)$`)
@@ -32,7 +44,7 @@ var requestReasonRegexp = regexp.MustCompile("(?im)^\\*\\*Reason\\*\\*:\\ ```\\n
 var resolutionReasonRegexp = regexp.MustCompile("(?im)^\\*\\*Resolution reason\\*\\*:\\ ```\\n(.*?)```(.*?)$")
 
 type MattermostSuite struct {
-	Suite
+	integration.Suite
 	appConfig Config
 	userNames struct {
 		ruler     string
@@ -57,7 +69,8 @@ func (s *MattermostSuite) SetupSuite() {
 	t := s.T()
 
 	logger.Init()
-	logger.Setup(logger.Config{Severity: "debug"})
+	err = logger.Setup(logger.Config{Severity: "debug"})
+	require.NoError(t, err)
 	s.raceNumber = runtime.GOMAXPROCS(0)
 	me, err := user.Current()
 	require.NoError(t, err)
@@ -97,7 +110,7 @@ func (s *MattermostSuite) SetupSuite() {
 	if teleportFeatures.AdvancedAccessWorkflows {
 		conditions.Request.Thresholds = []types.AccessReviewThreshold{types.AccessReviewThreshold{Approve: 2, Deny: 2}}
 	}
-	role, err := bootstrap.AddRole("foo", types.RoleSpecV5{Allow: conditions})
+	role, err := bootstrap.AddRole("foo", types.RoleSpecV6{Allow: conditions})
 	require.NoError(t, err)
 
 	user, err := bootstrap.AddUserWithRoles(me.Username+"@example.com", role.GetName())
@@ -110,7 +123,7 @@ func (s *MattermostSuite) SetupSuite() {
 	if teleportFeatures.AdvancedAccessWorkflows {
 		conditions.ReviewRequests = &types.AccessReviewConditions{Roles: []string{"editor"}}
 	}
-	role, err = bootstrap.AddRole("foo-reviewer", types.RoleSpecV5{Allow: conditions})
+	role, err = bootstrap.AddRole("foo-reviewer", types.RoleSpecV6{Allow: conditions})
 	require.NoError(t, err)
 
 	user, err = bootstrap.AddUserWithRoles(me.Username+"-reviewer1@example.com", role.GetName())
@@ -123,7 +136,7 @@ func (s *MattermostSuite) SetupSuite() {
 
 	// Set up plugin user.
 
-	role, err = bootstrap.AddRole("access-mattermost", types.RoleSpecV5{
+	role, err = bootstrap.AddRole("access-mattermost", types.RoleSpecV6{
 		Allow: types.RoleConditions{
 			Rules: []types.Rule{
 				types.NewRule("access_request", []string{"list", "read"}),
@@ -169,7 +182,8 @@ func (s *MattermostSuite) SetupSuite() {
 func (s *MattermostSuite) SetupTest() {
 	t := s.T()
 
-	logger.Setup(logger.Config{Severity: "debug"})
+	err := logger.Setup(logger.Config{Severity: "debug"})
+	require.NoError(t, err)
 
 	s.fakeMattermost = NewFakeMattermost(User{Username: "bot", Email: "bot@example.com"}, s.raceNumber)
 	t.Cleanup(s.fakeMattermost.Close)
@@ -222,7 +236,8 @@ func (s *MattermostSuite) newAccessRequest(reviewers []User) types.AccessRequest
 
 	req, err := types.NewAccessRequest(uuid.New().String(), s.userNames.requestor, "editor")
 	require.NoError(t, err)
-	req.SetRequestReason("because of " + strings.Repeat("A", 5000))
+	// max size of request was decreased here: https://github.com/gravitational/teleport/pull/13298
+	req.SetRequestReason("because of " + strings.Repeat("A", 4000))
 	var suggestedReviewers []string
 	for _, user := range reviewers {
 		suggestedReviewers = append(suggestedReviewers, user.Email)
@@ -321,7 +336,8 @@ func (s *MattermostSuite) TestApproval() {
 	directChannelID := s.fakeMattermost.GetDirectChannelFor(s.fakeMattermost.GetBotUser(), reviewer).ID
 	assert.Equal(t, directChannelID, post.ChannelID)
 
-	s.ruler().ApproveAccessRequest(s.Context(), req.GetName(), "okay")
+	err = s.ruler().ApproveAccessRequest(s.Context(), req.GetName(), "okay")
+	require.NoError(t, err)
 
 	postUpdate, err := s.fakeMattermost.CheckPostUpdate(s.Context())
 	require.NoError(t, err, "no messages updated")
@@ -352,7 +368,9 @@ func (s *MattermostSuite) TestDenial() {
 	directChannelID := s.fakeMattermost.GetDirectChannelFor(s.fakeMattermost.GetBotUser(), reviewer).ID
 	assert.Equal(t, directChannelID, post.ChannelID)
 
-	s.ruler().DenyAccessRequest(s.Context(), req.GetName(), "not okay "+strings.Repeat("A", 10000))
+	// max size of request was decreased here: https://github.com/gravitational/teleport/pull/13298
+	err = s.ruler().DenyAccessRequest(s.Context(), req.GetName(), "not okay "+strings.Repeat("A", 4000))
+	require.NoError(t, err)
 
 	postUpdate, err := s.fakeMattermost.CheckPostUpdate(s.Context())
 	require.NoError(t, err, "no messages updated")
@@ -583,7 +601,8 @@ func (s *MattermostSuite) TestRace() {
 		t.Skip("Doesn't work in OSS version")
 	}
 
-	logger.Setup(logger.Config{Severity: "info"}) // Turn off noisy debug logging
+	err := logger.Setup(logger.Config{Severity: "info"}) // Turn off noisy debug logging
+	require.NoError(t, err)
 
 	reviewer1 := s.fakeMattermost.StoreUser(User{Email: s.userNames.reviewer1})
 	reviewer2 := s.fakeMattermost.StoreUser(User{Email: s.userNames.reviewer2})

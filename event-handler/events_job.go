@@ -1,13 +1,28 @@
+// Copyright 2023 Gravitational, Inc
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package main
 
 import (
 	"context"
 
-	"github.com/gravitational/teleport-plugins/lib"
-	"github.com/gravitational/teleport-plugins/lib/logger"
 	"github.com/gravitational/trace"
 	limiter "github.com/sethvargo/go-limiter"
 	"github.com/sethvargo/go-limiter/memorystore"
+
+	"github.com/gravitational/teleport-plugins/lib"
+	"github.com/gravitational/teleport-plugins/lib/logger"
 )
 
 // EventsJob incapsulates audit log event consumption logic
@@ -56,7 +71,7 @@ func (j *EventsJob) run(ctx context.Context) error {
 		case trace.IsEOF(err):
 			log.WithError(err).Error("Watcher stream closed. Reconnecting...")
 		case lib.IsCanceled(err):
-			log.Debug("Watcher context is cancelled")
+			log.Debug("Watcher context is canceled")
 			j.app.Terminate()
 			return nil
 		default:
@@ -120,8 +135,12 @@ func (j *EventsJob) handleEvent(ctx context.Context, evt *TeleportEvent) error {
 	}
 
 	// Save last event id and cursor to disk
-	j.app.State.SetID(evt.ID)
-	j.app.State.SetCursor(evt.Cursor)
+	if err := j.app.State.SetID(evt.ID); err != nil {
+		return trace.Wrap(err)
+	}
+	if err := j.app.State.SetCursor(evt.Cursor); err != nil {
+		return trace.Wrap(err)
+	}
 
 	return nil
 }

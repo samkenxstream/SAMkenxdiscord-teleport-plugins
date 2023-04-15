@@ -21,10 +21,9 @@ import (
 	"io"
 
 	"github.com/ghodss/yaml"
-	kyaml "k8s.io/apimachinery/pkg/util/yaml"
-
 	"github.com/gravitational/teleport/api/types"
 	"github.com/gravitational/trace"
+	kyaml "k8s.io/apimachinery/pkg/util/yaml"
 )
 
 func writeResourcesYAML(w io.Writer, resources []types.Resource) error {
@@ -33,9 +32,13 @@ func writeResourcesYAML(w io.Writer, resources []types.Resource) error {
 		if err != nil {
 			return trace.Wrap(err)
 		}
-		w.Write(data)
+		if _, err := w.Write(data); err != nil {
+			return trace.Wrap(err)
+		}
 		if i != len(resources) {
-			io.WriteString(w, "\n---\n")
+			if _, err := io.WriteString(w, "\n---\n"); err != nil {
+				return trace.Wrap(err)
+			}
 		}
 	}
 	return nil
@@ -68,6 +71,13 @@ func (res *streamResource) UnmarshalJSON(raw []byte) error {
 
 	var resource types.Resource
 	switch header.Kind {
+	case types.KindNode:
+		switch header.Version {
+		case types.V2:
+			resource = &types.ServerV2{}
+		default:
+			return trace.BadParameter("unsupported resource version %s", header.Version)
+		}
 	case types.KindUser:
 		switch header.Version {
 		case types.V2:
@@ -77,8 +87,8 @@ func (res *streamResource) UnmarshalJSON(raw []byte) error {
 		}
 	case types.KindRole:
 		switch header.Version {
-		case types.V4:
-			resource = &types.RoleV5{}
+		case types.V4, types.V5, types.V6:
+			resource = &types.RoleV6{}
 		default:
 			return trace.BadParameter("unsupported resource version %s", header.Version)
 		}

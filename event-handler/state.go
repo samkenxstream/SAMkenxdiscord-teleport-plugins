@@ -24,10 +24,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gravitational/teleport-plugins/event-handler/lib"
-	"github.com/gravitational/teleport-plugins/lib/logger"
 	"github.com/gravitational/trace"
 	"github.com/peterbourgon/diskv/v3"
+
+	"github.com/gravitational/teleport-plugins/event-handler/lib"
+	"github.com/gravitational/teleport-plugins/lib/logger"
 )
 
 const (
@@ -212,7 +213,7 @@ func (s *State) GetSessions() (map[string]int64, error) {
 
 // SetSessionIndex writes current session index into state
 func (s *State) SetSessionIndex(id string, index int64) error {
-	var b []byte = make([]byte, 8)
+	var b = make([]byte, 8)
 
 	binary.BigEndian.PutUint64(b, uint64(index))
 

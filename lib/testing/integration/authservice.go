@@ -28,8 +28,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gravitational/teleport-plugins/lib/logger"
 	"github.com/gravitational/trace"
+
+	"github.com/gravitational/teleport-plugins/lib/logger"
 )
 
 var regexpAuthStarting = regexp.MustCompile(`Auth service [^ ]+ is starting on [^ ]+:(\d+)`)
@@ -118,8 +119,10 @@ func (auth *AuthService) Run(ctx context.Context) error {
 		terminateOnce.Do(func() {
 			log.Debug("Terminating Auth service process")
 			// Signal the process to gracefully terminate by sending SIGQUIT.
-			cmd.Process.Signal(syscall.SIGQUIT)
-			// If we're not done in 5 minutes, just kill the process by cancelling its context.
+			if err := cmd.Process.Signal(syscall.SIGQUIT); err != nil {
+				log.Warn(err)
+			}
+			// If we're not done in 5 minutes, just kill the process by canceling its context.
 			go func() {
 				select {
 				case <-auth.doneCh:
@@ -143,22 +146,24 @@ func (auth *AuthService) Run(ctx context.Context) error {
 		stdout := bufio.NewReader(stdoutPipe)
 		for {
 			line, err := stdout.ReadString('\n')
-			if line != "" {
-				auth.saveStdout(line)
-				auth.parseLine(ctx, line)
-				if !auth.IsReady() {
-					if addr := auth.AuthAddr(); !addr.IsEmpty() {
-						log.Debugf("Found addr of Auth service process: %v", addr)
-						auth.setReady(true)
-					}
-				}
-			}
 			if err == io.EOF {
 				return
 			}
 			if err := trace.Wrap(err); err != nil {
 				log.WithError(err).Error("failed to read process stdout")
 				return
+			}
+
+			auth.saveStdout(line)
+
+			if auth.IsReady() {
+				continue
+			}
+
+			auth.parseLine(ctx, line)
+			if addr := auth.AuthAddr(); !addr.IsEmpty() {
+				log.Debugf("Found addr of Auth service process: %v", addr)
+				auth.setReady(true)
 			}
 		}
 	}()
@@ -195,7 +200,7 @@ func (auth *AuthService) Run(ctx context.Context) error {
 	if !auth.IsReady() {
 		log.Error("Auth server is failed to initialize")
 		stdoutLines := strings.Split(auth.Stdout(), "\n")
-		for _, line := range stdoutLines[len(stdoutLines)-10:] {
+		for _, line := range stdoutLines {
 			log.Debug("AuthService log: ", line)
 		}
 		log.Debugf("AuthService stderr: %q", auth.Stderr())

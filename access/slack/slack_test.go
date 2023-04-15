@@ -1,4 +1,18 @@
-package main
+// Copyright 2023 Gravitational, Inc
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package slack
 
 import (
 	"context"
@@ -13,27 +27,26 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/gravitational/teleport-plugins/access/config"
-	"github.com/gravitational/teleport-plugins/lib"
-	"github.com/gravitational/teleport-plugins/lib/logger"
-	. "github.com/gravitational/teleport-plugins/lib/testing"
-	"github.com/gravitational/teleport-plugins/lib/testing/integration"
 	"github.com/gravitational/teleport/api/client/proto"
 	"github.com/gravitational/teleport/api/types"
 	"github.com/gravitational/trace"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/gravitational/teleport-plugins/access/common"
+	"github.com/gravitational/teleport-plugins/access/common/auth"
+	"github.com/gravitational/teleport-plugins/lib"
+	"github.com/gravitational/teleport-plugins/lib/logger"
+	"github.com/gravitational/teleport-plugins/lib/testing/integration"
 )
 
 var msgFieldRegexp = regexp.MustCompile(`(?im)^\*([a-zA-Z ]+)\*: (.+)$`)
 var requestReasonRegexp = regexp.MustCompile("(?im)^\\*Reason\\*:\\ ```\\n(.*?)```(.*?)$")
 
 type SlackSuite struct {
-	Suite
-	appConfig Config
+	integration.Suite
+	appConfig *Config
 	userNames struct {
 		ruler     string
 		requestor string
@@ -56,7 +69,8 @@ func (s *SlackSuite) SetupSuite() {
 	t := s.T()
 
 	logger.Init()
-	logger.Setup(logger.Config{Severity: "debug"})
+	err = logger.Setup(logger.Config{Severity: "debug"})
+	require.NoError(t, err)
 	s.raceNumber = runtime.GOMAXPROCS(0)
 	me, err := user.Current()
 	require.NoError(t, err)
@@ -96,7 +110,7 @@ func (s *SlackSuite) SetupSuite() {
 	if teleportFeatures.AdvancedAccessWorkflows {
 		conditions.Request.Thresholds = []types.AccessReviewThreshold{types.AccessReviewThreshold{Approve: 2, Deny: 2}}
 	}
-	role, err := bootstrap.AddRole("foo", types.RoleSpecV5{Allow: conditions})
+	role, err := bootstrap.AddRole("foo", types.RoleSpecV6{Allow: conditions})
 	require.NoError(t, err)
 
 	user, err := bootstrap.AddUserWithRoles(me.Username+"@example.com", role.GetName())
@@ -109,7 +123,7 @@ func (s *SlackSuite) SetupSuite() {
 	if teleportFeatures.AdvancedAccessWorkflows {
 		conditions.ReviewRequests = &types.AccessReviewConditions{Roles: []string{"editor"}}
 	}
-	role, err = bootstrap.AddRole("foo-reviewer", types.RoleSpecV5{Allow: conditions})
+	role, err = bootstrap.AddRole("foo-reviewer", types.RoleSpecV6{Allow: conditions})
 	require.NoError(t, err)
 
 	user, err = bootstrap.AddUserWithRoles(me.Username+"-reviewer1@example.com", role.GetName())
@@ -122,7 +136,7 @@ func (s *SlackSuite) SetupSuite() {
 
 	// Set up plugin user.
 
-	role, err = bootstrap.AddRole("access-slack", types.RoleSpecV5{
+	role, err = bootstrap.AddRole("access-slack", types.RoleSpecV6{
 		Allow: types.RoleConditions{
 			Rules: []types.Rule{
 				types.NewRule("access_request", []string{"list", "read"}),
@@ -168,7 +182,8 @@ func (s *SlackSuite) SetupSuite() {
 func (s *SlackSuite) SetupTest() {
 	t := s.T()
 
-	logger.Setup(logger.Config{Severity: "debug"})
+	err := logger.Setup(logger.Config{Severity: "debug"})
+	require.NoError(t, err)
 
 	s.fakeSlack = NewFakeSlack(User{Name: "slackbot"}, s.raceNumber)
 	t.Cleanup(s.fakeSlack.Close)
@@ -179,8 +194,9 @@ func (s *SlackSuite) SetupTest() {
 	conf.Teleport = s.teleportConfig
 	conf.Slack.Token = "000000"
 	conf.Slack.APIURL = s.fakeSlack.URL() + "/"
+	conf.AccessTokenProvider = auth.NewStaticAccessTokenProvider(conf.Slack.Token)
 
-	s.appConfig = conf
+	s.appConfig = &conf
 	s.SetContextTimeout(5 * time.Second)
 }
 
@@ -188,9 +204,7 @@ func (s *SlackSuite) startApp() {
 	t := s.T()
 	t.Helper()
 
-	app, err := NewApp(s.appConfig)
-	require.NoError(t, err)
-
+	app := NewSlackApp(s.appConfig)
 	s.StartApp(app)
 }
 
@@ -216,7 +230,8 @@ func (s *SlackSuite) newAccessRequest(reviewers []User) types.AccessRequest {
 
 	req, err := types.NewAccessRequest(uuid.New().String(), s.userNames.requestor, "editor")
 	require.NoError(t, err)
-	req.SetRequestReason("because of " + strings.Repeat("A", 5000))
+	// max size of request was decreased here: https://github.com/gravitational/teleport/pull/13298
+	req.SetRequestReason("because of " + strings.Repeat("A", 4000))
 	var suggestedReviewers []string
 	for _, user := range reviewers {
 		suggestedReviewers = append(suggestedReviewers, user.Profile.Email)
@@ -235,14 +250,16 @@ func (s *SlackSuite) createAccessRequest(reviewers []User) types.AccessRequest {
 	return req
 }
 
-func (s *SlackSuite) checkPluginData(reqID string, cond func(PluginData) bool) PluginData {
+func (s *SlackSuite) checkPluginData(reqID string, cond func(common.GenericPluginData) bool) common.GenericPluginData {
 	t := s.T()
 	t.Helper()
 
 	for {
 		rawData, err := s.ruler().PollAccessRequestPluginData(s.Context(), "slack", reqID)
 		require.NoError(t, err)
-		if data := DecodePluginData(rawData); cond(data) {
+		data, err := common.DecodePluginData(rawData)
+		require.NoError(t, err)
+		if cond(data) {
 			return data
 		}
 	}
@@ -257,23 +274,23 @@ func (s *SlackSuite) TestMessagePosting() {
 	s.startApp()
 	request := s.createAccessRequest([]User{reviewer2, reviewer1})
 
-	pluginData := s.checkPluginData(request.GetName(), func(data PluginData) bool {
-		return len(data.SlackData) > 0
+	pluginData := s.checkPluginData(request.GetName(), func(data common.GenericPluginData) bool {
+		return len(data.SentMessages) > 0
 	})
-	assert.Len(t, pluginData.SlackData, 2)
+	assert.Len(t, pluginData.SentMessages, 2)
 
-	var messages []Msg
+	var messages []Message
 	messageSet := make(SlackDataMessageSet)
 	for i := 0; i < 2; i++ {
 		msg, err := s.fakeSlack.CheckNewMessage(s.Context())
 		require.NoError(t, err)
-		messageSet.Add(SlackDataMessage{ChannelID: msg.Channel, Timestamp: msg.Timestamp})
+		messageSet.Add(common.MessageData{ChannelID: msg.Channel, MessageID: msg.Timestamp})
 		messages = append(messages, msg)
 	}
 
 	assert.Len(t, messageSet, 2)
-	assert.Contains(t, messageSet, pluginData.SlackData[0])
-	assert.Contains(t, messageSet, pluginData.SlackData[1])
+	assert.Contains(t, messageSet, pluginData.SentMessages[0])
+	assert.Contains(t, messageSet, pluginData.SentMessages[1])
 
 	sort.Sort(SlackMessageSlice(messages))
 
@@ -295,7 +312,7 @@ func (s *SlackSuite) TestMessagePosting() {
 
 	statusLine, err := getStatusLine(messages[0])
 	require.NoError(t, err)
-	assert.Equal(t, "*Status:* ⏳ PENDING", statusLine)
+	assert.Equal(t, "*Status*: ⏳ PENDING", statusLine)
 }
 
 func (s *SlackSuite) TestRecipientsConfig() {
@@ -303,38 +320,38 @@ func (s *SlackSuite) TestRecipientsConfig() {
 
 	reviewer1 := s.fakeSlack.StoreUser(User{Profile: UserProfile{Email: s.userNames.reviewer1}})
 	reviewer2 := s.fakeSlack.StoreUser(User{Profile: UserProfile{Email: s.userNames.reviewer2}})
-	s.appConfig.Recipients = config.RecipientsMap{
+	s.appConfig.Recipients = common.RawRecipientsMap{
 		types.Wildcard: []string{reviewer2.Profile.Email, reviewer1.ID},
 	}
 
 	s.startApp()
 
 	request := s.createAccessRequest(nil)
-	pluginData := s.checkPluginData(request.GetName(), func(data PluginData) bool {
-		return len(data.SlackData) > 0
+	pluginData := s.checkPluginData(request.GetName(), func(data common.GenericPluginData) bool {
+		return len(data.SentMessages) > 0
 	})
-	assert.Len(t, pluginData.SlackData, 2)
+	assert.Len(t, pluginData.SentMessages, 2)
 
 	var (
-		msg      Msg
-		messages []Msg
+		msg      Message
+		messages []Message
 	)
 
 	messageSet := make(SlackDataMessageSet)
 
 	msg, err := s.fakeSlack.CheckNewMessage(s.Context())
 	require.NoError(t, err)
-	messageSet.Add(SlackDataMessage{ChannelID: msg.Channel, Timestamp: msg.Timestamp})
+	messageSet.Add(common.MessageData{ChannelID: msg.Channel, MessageID: msg.Timestamp})
 	messages = append(messages, msg)
 
 	msg, err = s.fakeSlack.CheckNewMessage(s.Context())
 	require.NoError(t, err)
-	messageSet.Add(SlackDataMessage{ChannelID: msg.Channel, Timestamp: msg.Timestamp})
+	messageSet.Add(common.MessageData{ChannelID: msg.Channel, MessageID: msg.Timestamp})
 	messages = append(messages, msg)
 
 	assert.Len(t, messageSet, 2)
-	assert.Contains(t, messageSet, pluginData.SlackData[0])
-	assert.Contains(t, messageSet, pluginData.SlackData[1])
+	assert.Contains(t, messageSet, pluginData.SentMessages[0])
+	assert.Contains(t, messageSet, pluginData.SentMessages[1])
 
 	sort.Sort(SlackMessageSlice(messages))
 
@@ -354,7 +371,8 @@ func (s *SlackSuite) TestApproval() {
 	require.NoError(t, err)
 	assert.Equal(t, reviewer.ID, msg.Channel)
 
-	s.ruler().ApproveAccessRequest(s.Context(), req.GetName(), "okay")
+	err = s.ruler().ApproveAccessRequest(s.Context(), req.GetName(), "okay")
+	require.NoError(t, err)
 
 	msgUpdate, err := s.fakeSlack.CheckMessageUpdateByAPI(s.Context())
 	require.NoError(t, err)
@@ -363,7 +381,7 @@ func (s *SlackSuite) TestApproval() {
 
 	statusLine, err := getStatusLine(msgUpdate)
 	require.NoError(t, err)
-	assert.Equal(t, "*Status:* ✅ APPROVED\n*Resolution reason*: ```\nokay```", statusLine)
+	assert.Equal(t, "*Status*: ✅ APPROVED\n*Resolution reason*: ```\nokay```", statusLine)
 }
 
 func (s *SlackSuite) TestDenial() {
@@ -378,7 +396,9 @@ func (s *SlackSuite) TestDenial() {
 	require.NoError(t, err)
 	assert.Equal(t, reviewer.ID, msg.Channel)
 
-	s.ruler().DenyAccessRequest(s.Context(), req.GetName(), "not okay "+strings.Repeat("A", 10000))
+	// max size of request was decreased here: https://github.com/gravitational/teleport/pull/13298
+	err = s.ruler().DenyAccessRequest(s.Context(), req.GetName(), "not okay "+strings.Repeat("A", 4000))
+	require.NoError(t, err)
 
 	msgUpdate, err := s.fakeSlack.CheckMessageUpdateByAPI(s.Context())
 	require.NoError(t, err)
@@ -387,7 +407,7 @@ func (s *SlackSuite) TestDenial() {
 
 	statusLine, err := getStatusLine(msgUpdate)
 	require.NoError(t, err)
-	assert.Equal(t, "*Status:* ❌ DENIED\n*Resolution reason*: ```\nnot okay "+strings.Repeat("A", 491)+"``` (truncated)", statusLine)
+	assert.Equal(t, "*Status*: ❌ DENIED\n*Resolution reason*: ```\nnot okay "+strings.Repeat("A", 491)+"``` (truncated)", statusLine)
 }
 
 func (s *SlackSuite) TestReviewReplies() {
@@ -402,8 +422,8 @@ func (s *SlackSuite) TestReviewReplies() {
 	s.startApp()
 
 	req := s.createAccessRequest([]User{reviewer})
-	s.checkPluginData(req.GetName(), func(data PluginData) bool {
-		return len(data.SlackData) > 0
+	s.checkPluginData(req.GetName(), func(data common.GenericPluginData) bool {
+		return len(data.SentMessages) > 0
 	})
 
 	msg, err := s.fakeSlack.CheckNewMessage(s.Context())
@@ -486,6 +506,9 @@ func (s *SlackSuite) TestApprovalByReview() {
 	assert.Equal(t, msg.Channel, reply.Channel)
 	assert.Equal(t, msg.Timestamp, reply.ThreadTs)
 	assert.Contains(t, reply.Text, s.userNames.reviewer2+" reviewed the request", "reply must contain a review author")
+	// When posting a review, the slack bot also updates the message to add the amount of reviewrs
+	// This update is soon superseded by the "access allowed" update
+	_, _ = s.fakeSlack.CheckMessageUpdateByAPI(s.Context())
 
 	msgUpdate, err := s.fakeSlack.CheckMessageUpdateByAPI(s.Context())
 	require.NoError(t, err)
@@ -494,7 +517,7 @@ func (s *SlackSuite) TestApprovalByReview() {
 
 	statusLine, err := getStatusLine(msgUpdate)
 	require.NoError(t, err)
-	assert.Equal(t, "*Status:* ✅ APPROVED\n*Resolution reason*: ```\nfinally okay```", statusLine)
+	assert.Equal(t, "*Status*: ✅ APPROVED\n*Resolution reason*: ```\nfinally okay```", statusLine)
 }
 
 func (s *SlackSuite) TestDenialByReview() {
@@ -540,6 +563,9 @@ func (s *SlackSuite) TestDenialByReview() {
 	assert.Equal(t, msg.Channel, reply.Channel)
 	assert.Equal(t, msg.Timestamp, reply.ThreadTs)
 	assert.Contains(t, reply.Text, s.userNames.reviewer2+" reviewed the request", "reply must contain a review author")
+	// When posting a review, the slack bot also updates the message to add the amount of reviewrs
+	// This update is soon superseded by the "access allowed" update
+	_, _ = s.fakeSlack.CheckMessageUpdateByAPI(s.Context())
 
 	msgUpdate, err := s.fakeSlack.CheckMessageUpdateByAPI(s.Context())
 	require.NoError(t, err)
@@ -548,7 +574,7 @@ func (s *SlackSuite) TestDenialByReview() {
 
 	statusLine, err := getStatusLine(msgUpdate)
 	require.NoError(t, err)
-	assert.Equal(t, "*Status:* ❌ DENIED\n*Resolution reason*: ```\nfinally not okay```", statusLine)
+	assert.Equal(t, "*Status*: ❌ DENIED\n*Resolution reason*: ```\nfinally not okay```", statusLine)
 }
 
 func (s *SlackSuite) TestExpiration() {
@@ -563,8 +589,8 @@ func (s *SlackSuite) TestExpiration() {
 	require.NoError(t, err)
 	assert.Equal(t, reviewer.ID, msg.Channel)
 
-	s.checkPluginData(request.GetName(), func(data PluginData) bool {
-		return len(data.SlackData) > 0
+	s.checkPluginData(request.GetName(), func(data common.GenericPluginData) bool {
+		return len(data.SentMessages) > 0
 	})
 
 	err = s.ruler().DeleteAccessRequest(s.Context(), request.GetName()) // simulate expiration
@@ -577,7 +603,7 @@ func (s *SlackSuite) TestExpiration() {
 
 	statusLine, err := getStatusLine(msgUpdate)
 	require.NoError(t, err)
-	assert.Equal(t, "*Status:* ⌛ EXPIRED", statusLine)
+	assert.Equal(t, "*Status*: ⌛ EXPIRED", statusLine)
 }
 
 func (s *SlackSuite) TestRace() {
@@ -587,7 +613,8 @@ func (s *SlackSuite) TestRace() {
 		t.Skip("Doesn't work in OSS version")
 	}
 
-	logger.Setup(logger.Config{Severity: "info"}) // Turn off noisy debug logging
+	err := logger.Setup(logger.Config{Severity: "info"}) // Turn off noisy debug logging
+	require.NoError(t, err)
 
 	reviewer1 := s.fakeSlack.StoreUser(User{Profile: UserProfile{Email: s.userNames.reviewer1}})
 	reviewer2 := s.fakeSlack.StoreUser(User{Profile: UserProfile{Email: s.userNames.reviewer2}})
@@ -641,7 +668,7 @@ func (s *SlackSuite) TestRace() {
 			if msg.ThreadTs == "" {
 				// Handle "root" notifications.
 
-				threadMsgKey := SlackDataMessage{ChannelID: msg.Channel, Timestamp: msg.Timestamp}
+				threadMsgKey := common.MessageData{ChannelID: msg.Channel, MessageID: msg.Timestamp}
 				if _, loaded := threadMsgIDs.LoadOrStore(threadMsgKey, struct{}{}); loaded {
 					return setRaceErr(trace.Errorf("thread %v already stored", threadMsgKey))
 				}
@@ -668,7 +695,7 @@ func (s *SlackSuite) TestRace() {
 			} else {
 				// Handle review comments.
 
-				threadMsgKey := SlackDataMessage{ChannelID: msg.Channel, Timestamp: msg.ThreadTs}
+				threadMsgKey := common.MessageData{ChannelID: msg.Channel, MessageID: msg.ThreadTs}
 				var newCounter int32
 				val, _ := reviewReplyCounters.LoadOrStore(threadMsgKey, &newCounter)
 				counterPtr := val.(*int32)
@@ -679,15 +706,15 @@ func (s *SlackSuite) TestRace() {
 		})
 	}
 
-	// Multiplier TWO means that we handle updates for each of the two messages posted to reviewers.
-	for i := 0; i < 2*s.raceNumber; i++ {
+	// Multiplier TWO means that we handle the 2 updates for each of the two messages posted to reviewers.
+	for i := 0; i < 2*2*s.raceNumber; i++ {
 		process.SpawnCritical(func(ctx context.Context) error {
 			msg, err := s.fakeSlack.CheckMessageUpdateByAPI(ctx)
 			if err != nil {
 				return setRaceErr(trace.Wrap(err))
 			}
 
-			threadMsgKey := SlackDataMessage{ChannelID: msg.Channel, Timestamp: msg.Timestamp}
+			threadMsgKey := common.MessageData{ChannelID: msg.Channel, MessageID: msg.Timestamp}
 			var newCounter int32
 			val, _ := msgUpdateCounters.LoadOrStore(threadMsgKey, &newCounter)
 			counterPtr := val.(*int32)
@@ -713,13 +740,14 @@ func (s *SlackSuite) TestRace() {
 		val, loaded = msgUpdateCounters.LoadAndDelete(key)
 		next = next && assert.True(t, loaded)
 		counterPtr = val.(*int32)
-		next = next && assert.Equal(t, int32(1), *counterPtr)
+		// Each message should be updated 2 times
+		next = next && assert.Equal(t, int32(2), *counterPtr)
 
 		return next
 	})
 }
 
-func parseMessageField(msg Msg, field string) (string, error) {
+func parseMessageField(msg Message, field string) (string, error) {
 	block := msg.BlockItems[1].Block
 	sectionBlock, ok := block.(SectionBlock)
 	if !ok {
@@ -745,7 +773,7 @@ func parseMessageField(msg Msg, field string) (string, error) {
 	return "", trace.Errorf("cannot find field %s in %v", field, fields)
 }
 
-func getStatusLine(msg Msg) (string, error) {
+func getStatusLine(msg Message) (string, error) {
 	block := msg.BlockItems[2].Block
 	contextBlock, ok := block.(ContextBlock)
 	if !ok {

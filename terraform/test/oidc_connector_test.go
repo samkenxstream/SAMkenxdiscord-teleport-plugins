@@ -18,6 +18,7 @@ package test
 
 import (
 	"github.com/gravitational/teleport/api/types"
+	"github.com/gravitational/teleport/api/types/wrappers"
 	"github.com/gravitational/trace"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
@@ -44,7 +45,7 @@ func (s *TerraformSuite) TestOIDCConnector() {
 				Config: s.getFixture("oidc_connector_0_create.tf"),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr(name, "kind", "oidc"),
-					resource.TestCheckResourceAttr(name, "metadata.expires", "2022-10-12T07:20:50Z"),
+					resource.TestCheckResourceAttr(name, "metadata.expires", "2032-10-12T07:20:50Z"),
 					resource.TestCheckResourceAttr(name, "spec.client_id", "client"),
 					resource.TestCheckResourceAttr(name, "spec.claims_to_roles.0.claim", "test"),
 					resource.TestCheckResourceAttr(name, "spec.claims_to_roles.0.roles.0", "terraform"),
@@ -58,7 +59,7 @@ func (s *TerraformSuite) TestOIDCConnector() {
 				Config: s.getFixture("oidc_connector_1_update.tf"),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr(name, "kind", "oidc"),
-					resource.TestCheckResourceAttr(name, "metadata.expires", "2022-10-12T07:20:50Z"),
+					resource.TestCheckResourceAttr(name, "metadata.expires", "2032-10-12T07:20:50Z"),
 					resource.TestCheckResourceAttr(name, "spec.client_id", "client"),
 					resource.TestCheckResourceAttr(name, "spec.claims_to_roles.0.claim", "test"),
 					resource.TestCheckResourceAttr(name, "spec.claims_to_roles.0.roles.0", "teleport"),
@@ -89,6 +90,9 @@ func (s *TerraformSuite) TestImportOIDCConnector() {
 					Claim: "test",
 					Roles: []string{"terraform"},
 				},
+			},
+			RedirectURLs: wrappers.Strings{
+				"https://example.com/redirect",
 			},
 		},
 	}
