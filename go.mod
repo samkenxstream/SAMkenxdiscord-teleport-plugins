@@ -32,7 +32,7 @@ require (
 	golang.org/x/crypto v0.6.0
 	golang.org/x/net v0.7.0
 	golang.org/x/sync v0.1.0
-	google.golang.org/grpc v1.52.3
+	google.golang.org/grpc v1.53.0
 	google.golang.org/protobuf v1.28.1
 	gopkg.in/mail.v2 v2.3.1
 	k8s.io/apimachinery v0.26.1
@@ -43,9 +43,8 @@ require (
 // https://github.com/gravitational/teleport/blob/3e8d5e3775397e3dee25f62ecf0ec50552615f85/go.mod#L158
 // TODO: remove this in v13.
 require (
-	cloud.google.com/go/iam v0.8.0 // indirect
 	google.golang.org/api v0.103.0 // indirect
-	google.golang.org/genproto v0.0.0-20221201164419-0e50fba7f41c // indirect
+	google.golang.org/genproto v0.0.0-20230110181048-76db0878b65f // indirect
 )
 
 require (
